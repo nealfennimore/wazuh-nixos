@@ -1,45 +1,67 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   inherit (lib) mkEnableOption mkOption types;
   cfg = config.services.wazuh-indexer;
   home = "${cfg.package}/share/wazuh-indexer";
   runtime = "/run/wazuh-indexer";
-  fileOption = description: mkOption { type = types.str; inherit description; };
+  fileOption =
+    description:
+    mkOption {
+      type = types.str;
+      inherit description;
+    };
   requestedAddresses = lib.toList cfg.listenAddress;
   # NixOS resolves its own hostname to 127.0.0.2. Keep this loopback binding
   # even for an explicit LAN bind, so the admin connection verifies that DNS
   # name without requiring a private IP SAN or disabling hostname checks.
-  bindAddresses = lib.unique (requestedAddresses
-    ++ lib.optional (!(builtins.elem "0.0.0.0" requestedAddresses)) "127.0.0.2");
-  settings = cfg.settings // {
-    "network.host" = bindAddresses;
-    "http.port" = cfg.port;
-    "transport.port" = cfg.transportPort;
-    "node.name" = cfg.nodeName;
-    "cluster.name" = cfg.clusterName;
-    "path.data" = "/var/lib/wazuh-indexer";
-    "path.logs" = "/var/log/wazuh-indexer";
-    "plugins.security.ssl.http.enabled" = true;
-    "plugins.security.ssl.http.pemcert_filepath" = "node.pem";
-    "plugins.security.ssl.http.pemkey_filepath" = "node.key";
-    "plugins.security.ssl.http.pemtrustedcas_filepath" = "ca.pem";
-    "plugins.security.ssl.transport.pemcert_filepath" = "node.pem";
-    "plugins.security.ssl.transport.pemkey_filepath" = "node.key";
-    "plugins.security.ssl.transport.pemtrustedcas_filepath" = "ca.pem";
-    "plugins.security.ssl.transport.enforce_hostname_verification" = true;
-    "plugins.security.authcz.admin_dn" = cfg.admin.distinguishedNames;
-    "plugins.security.nodes_dn" = cfg.nodeDistinguishedNames;
-    "plugins.security.allow_default_init_securityindex" = false;
-    "compatibility.override_main_response_version" = true;
-  } // lib.optionalAttrs cfg.singleNode { "discovery.type" = "single-node"; };
+  bindAddresses = lib.unique (
+    requestedAddresses ++ lib.optional (!(builtins.elem "0.0.0.0" requestedAddresses)) "127.0.0.2"
+  );
+  settings =
+    cfg.settings
+    // {
+      "network.host" = bindAddresses;
+      "http.port" = cfg.port;
+      "transport.port" = cfg.transportPort;
+      "node.name" = cfg.nodeName;
+      "cluster.name" = cfg.clusterName;
+      "path.data" = "/var/lib/wazuh-indexer";
+      "path.logs" = "/var/log/wazuh-indexer";
+      "plugins.security.ssl.http.enabled" = true;
+      "plugins.security.ssl.http.pemcert_filepath" = "node.pem";
+      "plugins.security.ssl.http.pemkey_filepath" = "node.key";
+      "plugins.security.ssl.http.pemtrustedcas_filepath" = "ca.pem";
+      "plugins.security.ssl.transport.pemcert_filepath" = "node.pem";
+      "plugins.security.ssl.transport.pemkey_filepath" = "node.key";
+      "plugins.security.ssl.transport.pemtrustedcas_filepath" = "ca.pem";
+      "plugins.security.ssl.transport.enforce_hostname_verification" = true;
+      "plugins.security.authcz.admin_dn" = cfg.admin.distinguishedNames;
+      "plugins.security.nodes_dn" = cfg.nodeDistinguishedNames;
+      "plugins.security.allow_default_init_securityindex" = false;
+      "compatibility.override_main_response_version" = true;
+    }
+    // lib.optionalAttrs cfg.singleNode { "discovery.type" = "single-node"; };
   generated = pkgs.writeText "opensearch.yml" (builtins.toJSON settings);
   userNames = builtins.attrNames cfg.users;
-  usersSpec = pkgs.writeText "indexer-users.json" (builtins.toJSON (lib.imap0 (i: name: {
-    inherit name;
-    credential = "user-${toString i}";
-    backend_roles = cfg.users.${name}.backendRoles;
-  }) userNames));
-  credentials = [ "ca:${cfg.tls.ca}" "certificate:${cfg.tls.certificate}" "key:${cfg.tls.key}" ];
+  usersSpec = pkgs.writeText "indexer-users.json" (
+    builtins.toJSON (
+      lib.imap0 (i: name: {
+        inherit name;
+        credential = "user-${toString i}";
+        backend_roles = cfg.users.${name}.backendRoles;
+      }) userNames
+    )
+  );
+  credentials = [
+    "ca:${cfg.tls.ca}"
+    "certificate:${cfg.tls.certificate}"
+    "key:${cfg.tls.key}"
+  ];
   hardening = {
     NoNewPrivileges = true;
     ProtectSystem = "strict";
@@ -53,19 +75,53 @@ let
     CapabilityBoundingSet = "";
     UMask = "0077";
   };
-in {
+in
+{
   options.services.wazuh-indexer = {
     enable = mkEnableOption "the Wazuh indexer";
-    package = mkOption { type = types.package; default = pkgs.callPackage ../../pkgs/wazuh-indexer { }; defaultText = lib.literalExpression "pkgs.callPackage ../../pkgs/wazuh-indexer { }"; };
-    listenAddress = mkOption { type = types.either types.str (types.listOf types.str); default = [ "127.0.0.1" "127.0.0.2" ]; description = "Bind addresses. Defaults cover localhost and the NixOS hostname loopback address. The module also retains 127.0.0.2 for explicit interface binds, so securityadmin can verify the node hostname. A 0.0.0.0 wildcard already covers it."; };
-    port = mkOption { type = types.port; default = 9200; };
-    transportPort = mkOption { type = types.port; default = 9300; };
+    package = mkOption {
+      type = types.package;
+      default = pkgs.callPackage ../../pkgs/wazuh-indexer { };
+      defaultText = lib.literalExpression "pkgs.callPackage ../../pkgs/wazuh-indexer { }";
+    };
+    listenAddress = mkOption {
+      type = types.either types.str (types.listOf types.str);
+      default = [
+        "127.0.0.1"
+        "127.0.0.2"
+      ];
+      description = "Bind addresses. Defaults cover localhost and the NixOS hostname loopback address. The module also retains 127.0.0.2 for explicit interface binds, so securityadmin can verify the node hostname. A 0.0.0.0 wildcard already covers it.";
+    };
+    port = mkOption {
+      type = types.port;
+      default = 9200;
+    };
+    transportPort = mkOption {
+      type = types.port;
+      default = 9300;
+    };
     openFirewall = mkEnableOption "the indexer HTTP firewall port (transport remains explicit)";
-    nodeName = mkOption { type = types.str; default = config.networking.hostName; };
-    clusterName = mkOption { type = types.str; default = "wazuh-cluster"; };
-    singleNode = mkOption { type = types.bool; default = true; description = "Use single-node discovery. For clusters disable this and configure discovery in settings."; };
-    heapSize = mkOption { type = types.strMatching "[1-9][0-9]*[mgMG]"; default = "1g"; };
-    nodeDistinguishedNames = mkOption { type = types.listOf types.str; description = "Exact trusted node certificate subject DNs."; };
+    nodeName = mkOption {
+      type = types.str;
+      default = config.networking.hostName;
+    };
+    clusterName = mkOption {
+      type = types.str;
+      default = "wazuh-cluster";
+    };
+    singleNode = mkOption {
+      type = types.bool;
+      default = true;
+      description = "Use single-node discovery. For clusters disable this and configure discovery in settings.";
+    };
+    heapSize = mkOption {
+      type = types.strMatching "[1-9][0-9]*[mgMG]";
+      default = "1g";
+    };
+    nodeDistinguishedNames = mkOption {
+      type = types.listOf types.str;
+      description = "Exact trusted node certificate subject DNs.";
+    };
     tls = {
       ca = fileOption "Runtime CA certificate file.";
       certificate = fileOption "Runtime node certificate file with a DNS SAN matching nodeName.";
@@ -74,36 +130,67 @@ in {
     admin = {
       certificate = fileOption "Runtime securityadmin client certificate.";
       key = fileOption "Runtime securityadmin PKCS#8 private key; never passed to the indexer daemon.";
-      distinguishedNames = mkOption { type = types.listOf types.str; description = "Exact admin certificate subject DNs."; };
-      host = mkOption { type = types.str; default = cfg.nodeName; description = "DNS name used by securityadmin; must match the node certificate SAN."; };
+      distinguishedNames = mkOption {
+        type = types.listOf types.str;
+        description = "Exact admin certificate subject DNs.";
+      };
+      host = mkOption {
+        type = types.str;
+        default = cfg.nodeName;
+        description = "DNS name used by securityadmin; must match the node certificate SAN.";
+      };
     };
     users = mkOption {
       default = { };
       description = "Declarative internal users. Reapplied on restart; upstream demo users are excluded.";
-      type = types.attrsOf (types.submodule {
-        options = {
-          passwordHashFile = fileOption "Runtime file containing a bcrypt password hash.";
-          backendRoles = mkOption { type = types.listOf types.str; default = [ ]; };
-        };
-      });
+      type = types.attrsOf (
+        types.submodule {
+          options = {
+            passwordHashFile = fileOption "Runtime file containing a bcrypt password hash.";
+            backendRoles = mkOption {
+              type = types.listOf types.str;
+              default = [ ];
+            };
+          };
+        }
+      );
     };
-    settings = mkOption { type = types.attrsOf types.anything; default = { }; description = "Additional OpenSearch settings. Module-owned TLS, state paths and endpoints take precedence."; };
+    settings = mkOption {
+      type = types.attrsOf types.anything;
+      default = { };
+      description = "Additional OpenSearch settings. Module-owned TLS, state paths and endpoints take precedence.";
+    };
   };
   config = lib.mkIf cfg.enable {
     assertions = [
-      { assertion = cfg.users != { }; message = "wazuh-indexer.users must contain explicit users; demo passwords are never installed."; }
-      { assertion = cfg.nodeDistinguishedNames != [ ] && cfg.admin.distinguishedNames != [ ]; message = "wazuh-indexer requires trusted node and admin certificate DNs."; }
+      {
+        assertion = cfg.users != { };
+        message = "wazuh-indexer.users must contain explicit users; demo passwords are never installed.";
+      }
+      {
+        assertion = cfg.nodeDistinguishedNames != [ ] && cfg.admin.distinguishedNames != [ ];
+        message = "wazuh-indexer requires trusted node and admin certificate DNs.";
+      }
     ];
     users.groups.wazuh-indexer = { };
-    users.users.wazuh-indexer = { isSystemUser = true; group = "wazuh-indexer"; };
-    boot.kernel.sysctl."vm.max_map_count" = lib.mkDefault 262144;
+    users.users.wazuh-indexer = {
+      isSystemUser = true;
+      group = "wazuh-indexer";
+    };
+    boot.kernel.sysctl."vm.max_map_count" = lib.mkForce 262144;
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
     systemd.services.wazuh-indexer = {
       description = "Wazuh indexer";
       wantedBy = [ "multi-user.target" ];
-      wants = [ "network-online.target" "wazuh-indexer-security.service" ];
+      wants = [
+        "network-online.target"
+        "wazuh-indexer-security.service"
+      ];
       after = [ "network-online.target" ];
-      path = [ pkgs.coreutils pkgs.gnused ];
+      path = [
+        pkgs.coreutils
+        pkgs.gnused
+      ];
       environment = {
         OPENSEARCH_PATH_CONF = runtime;
         OPENSEARCH_TMPDIR = "/var/lib/wazuh-indexer/tmp";
@@ -141,7 +228,10 @@ in {
       after = [ "wazuh-indexer.service" ];
       requires = [ "wazuh-indexer.service" ];
       partOf = [ "wazuh-indexer.service" ];
-      path = [ pkgs.coreutils pkgs.python3 ];
+      path = [
+        pkgs.coreutils
+        pkgs.python3
+      ];
       script = ''
         cp -r ${home}/config/opensearch-security/. /run/wazuh-indexer-security/
         chmod -R u+w /run/wazuh-indexer-security
@@ -159,8 +249,12 @@ in {
         RemainAfterExit = true;
         RuntimeDirectory = "wazuh-indexer-security";
         RuntimeDirectoryMode = "0700";
-        LoadCredential = [ "ca:${cfg.tls.ca}" "certificate:${cfg.admin.certificate}" "key:${cfg.admin.key}" ]
-          ++ lib.imap0 (i: name: "user-${toString i}:${cfg.users.${name}.passwordHashFile}") userNames;
+        LoadCredential = [
+          "ca:${cfg.tls.ca}"
+          "certificate:${cfg.admin.certificate}"
+          "key:${cfg.admin.key}"
+        ]
+        ++ lib.imap0 (i: name: "user-${toString i}:${cfg.users.${name}.passwordHashFile}") userNames;
         Restart = "on-failure";
         RestartSec = 5;
         TimeoutStartSec = 180;
