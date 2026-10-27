@@ -13,3 +13,19 @@ patched, count = re.subn(r"rejectUnauthorized\s*:\s*false\b", "rejectUnauthorize
 if count != 1:
     raise SystemExit(f"Expected one insecure HTTPS agent; found {count}")
 client.write_text(patched)
+
+# Audit executable server code in all first-party Wazuh plugins. No allowlist:
+# any other TLS override needs source review. This conservative text scan can
+# reject comments as well; a false positive is reviewed rather than ignored.
+scanned = []
+for path in root.glob("*/server/**/*.js"):
+    if "wazuh" not in path.relative_to(root).parts[0].lower():
+        continue
+    scanned.append(path)
+    print("TLS audit:", path.relative_to(root))
+    source = path.read_text()
+    safe_removed = re.sub(r'''["']?rejectUnauthorized["']?\s*:\s*true\s*[,}]''', "", source)
+    if "rejectUnauthorized" in safe_removed or "checkServerIdentity" in source:
+        raise SystemExit(f"Unreviewed Wazuh TLS override: {path.relative_to(root)}")
+if not scanned or client not in scanned:
+    raise SystemExit("TLS audit did not cover the patched API client")
