@@ -49,6 +49,8 @@
 
       nixosModules.wazuh-agent = wazuhModule;
       nixosModules.default = wazuhModule;
+      nixosModules.wazuh-indexer = import ./nixos/wazuh-indexer;
+      nixosModules.wazuh-dashboard = import ./nixos/wazuh-dashboard;
 
       # For `nixos-rebuild build-vm --flake .#wazuh-agent-vm`.
       nixosConfigurations.wazuh-agent-vm = nixpkgs.lib.nixosSystem {
@@ -109,6 +111,13 @@
         checks.integration = import ./nixos/tests/agent/integration.nix {
           inherit pkgs wazuhModule;
         };
+
+        packages.wazuh-server = pkgs.callPackage ./pkgs/wazuh-server { };
+        checks.server-package = import ./pkgs/wazuh-server/package-check.nix { inherit pkgs; };
+        packages.wazuh-indexer = pkgs.callPackage ./pkgs/wazuh-indexer { };
+        checks.indexer = import ./nixos/tests/indexer { inherit pkgs; };
+        packages.wazuh-dashboard = pkgs.callPackage ./pkgs/wazuh-dashboard { };
+        checks.dashboard = import ./nixos/tests/dashboard { inherit pkgs; };
 
         # The wazuh_testing package on its own, so a broken build or a stale
         # source hash surfaces in seconds instead of at VM start:
