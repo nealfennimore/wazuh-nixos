@@ -76,7 +76,7 @@
 
         # A headless test of the module. It asserts activation and the
         # generated ossec.conf. It needs no manager, so it stays fast.
-        checks.agent = import ./nixos/tests/agent.nix {
+        checks.agent = import ./nixos/tests/agent/agent.nix {
           inherit pkgs wazuhModule;
         };
 
@@ -86,10 +86,10 @@
         # must not become a precondition for the fast test.
         #
         # The image pin is a checked-in JSON file that
-        # nixos/tests/prefetch-manager-image.sh writes. Until it exists, this
+        # nixos/tests/common/prefetch-manager-image.sh writes. Until it exists, this
         # check throws with instructions and checks.agent is unaffected,
         # because flake outputs evaluate lazily.
-        checks.enrollment = import ./nixos/tests/enrollment.nix {
+        checks.enrollment = import ./nixos/tests/agent/enrollment.nix {
           inherit pkgs wazuhModule;
         };
 
@@ -98,7 +98,7 @@
         # binaries rather than the module. It is slow. The file documents the
         # shims it needs and takes the suite list and extra pytest flags as
         # arguments.
-        checks.integration = import ./nixos/tests/integration.nix {
+        checks.integration = import ./nixos/tests/agent/integration.nix {
           inherit pkgs wazuhModule;
         };
 

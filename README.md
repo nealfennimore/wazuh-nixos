@@ -554,12 +554,12 @@ The manager image is not pinned in this repository, because a manifest digest
 and a hash cannot be guessed. Write the pin first:
 
 ```bash
-./nixos/tests/prefetch-manager-image.sh 4.14.7
-git add nixos/tests/wazuh-manager-image.amd64.json
+./nixos/tests/common/prefetch-manager-image.sh 4.14.7
+git add nixos/tests/common/wazuh-manager-image.amd64.json
 ```
 
-The script writes `nixos/tests/wazuh-manager-image.<arch>.json`.
-`nixos/tests/wazuh-manager-image.nix` reads that file and passes it to
+The script writes `nixos/tests/common/wazuh-manager-image.<arch>.json`.
+`nixos/tests/common/wazuh-manager-image.nix` reads that file and passes it to
 `dockerTools.pullImage`, so no hash is edited by hand. Until the file exists,
 this check throws with the same instructions. `checks.agent` is not affected.
 
@@ -569,7 +569,7 @@ git tracks, so an uncommitted pin is invisible to Nix.
 One run produces one architecture. Pass a second argument to pin the other:
 
 ```bash
-./nixos/tests/prefetch-manager-image.sh 4.14.7 arm64
+./nixos/tests/common/prefetch-manager-image.sh 4.14.7 arm64
 ```
 
 Keep the manager version in step with `version` in `pkgs/wazuh-agent.nix`.
@@ -602,10 +602,10 @@ The default run covers every agent-side suite: `test_agentd`,
 `test_enrollment`, `test_execd`, `test_fim`, `test_logcollector`, `test_sca`
 and `test_syscollector`. Expect several hours. `test_fim` is most of that. To
 narrow the selection, pass `suites` or `extraPytestFlags` where `flake.nix`
-imports `nixos/tests/integration.nix`.
+imports `nixos/tests/agent/integration.nix`.
 
 A short exclusion list applies to `test_fim`, and it lives in `suiteFlags` in
-`nixos/tests/integration.nix` with a reason on each entry. The exclusions
+`nixos/tests/agent/integration.nix` with a reason on each entry. The exclusions
 fall in two classes. The whodata cases and the audit-rule tests need audit
 infrastructure that NixOS cannot provide, such as the `audisp-af_unix`
 plugin at `/sbin` and the `yum` or `apt` package managers. Three single
@@ -617,7 +617,7 @@ in JUnit form and `log-<suite>.txt` with the full pytest output. The check
 fails when any suite reports a failure.
 
 Expect friction on the first runs. The suites assume an upstream package
-installation, and three shims in `nixos/tests/integration.nix` bridge the
+installation, and three shims in `nixos/tests/agent/integration.nix` bridge the
 differences. That file documents each shim. A test that fails on an
 environment assumption rather than on agent behavior belongs in
 `extraPytestFlags` as a `--deselect` entry.

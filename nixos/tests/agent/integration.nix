@@ -50,7 +50,7 @@ let
   # Keep this pin in step with pkgs/wazuh-agent.nix, which documents the
   # submodule fallback. A plain `nix build` copies the repository without
   # submodule contents, and this fetch fills the gap.
-  submodule = ../../modules/wazuh;
+  submodule = ../../../modules/wazuh;
   haveSubmodule = builtins.pathExists (submodule + "/tests/integration/pytest.ini");
   testsSrc =
     if haveSubmodule then
@@ -110,7 +110,7 @@ let
     ];
   };
 
-  wazuhTesting = pkgs.callPackage ../../pkgs/wazuh-testing.nix { };
+  wazuhTesting = pkgs.callPackage ../../../pkgs/wazuh-testing.nix { };
   pythonEnv = pkgs.python3.withPackages (_: [ wazuhTesting ]);
 
   # test_fim/conftest.py holds a session-scoped autouse fixture that
@@ -133,7 +133,7 @@ let
     except ValueError:
         sys.exit(
             "disable-install-audit: the install_audit fixture moved in "
-            f"{conftest}. Update nixos/tests/integration.nix."
+            f"{conftest}. Update nixos/tests/agent/integration.nix."
         )
     replacement = (
         "def install_audit():\n"

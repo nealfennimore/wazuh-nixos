@@ -31,14 +31,14 @@ let
   havePin = builtins.pathExists pinFile;
   pin = builtins.fromJSON (builtins.readFile pinFile);
 
-  regenerate = "./nixos/tests/prefetch-manager-image.sh ${version} ${arch}";
+  regenerate = "./nixos/tests/common/prefetch-manager-image.sh ${version} ${arch}";
 
   # Read through `or null` so that a truncated or hand-edited file reports the
   # mismatch rather than an attribute error.
   problem =
     if !havePin then
       ''
-        nixos/tests/wazuh-manager-image.nix has no pin for ${arch}.
+        nixos/tests/common/wazuh-manager-image.nix has no pin for ${arch}.
 
         The enrollment check needs the ${imageName}:${version} image from
         Docker Hub. Nix cannot fetch it without a manifest digest and a hash,
@@ -54,14 +54,14 @@ let
       ''
     else if (pin.imageName or null) != imageName then
       ''
-        nixos/tests/${pinName} pins ${pin.imageName or "nothing"},
+        nixos/tests/common/${pinName} pins ${pin.imageName or "nothing"},
         but this file expects ${imageName}. Regenerate the pin:
 
           ${regenerate}
       ''
     else if (pin.finalImageTag or null) != version then
       ''
-        nixos/tests/${pinName} pins ${imageName}:${pin.finalImageTag or "nothing"},
+        nixos/tests/common/${pinName} pins ${imageName}:${pin.finalImageTag or "nothing"},
         but this file expects ${version}.
 
         An agent newer than its manager is not a supported combination, so a

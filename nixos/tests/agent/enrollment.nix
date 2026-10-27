@@ -8,8 +8,8 @@
 # manager's archive.
 #
 # It needs the manager container image, which comes from Docker Hub. The pin
-# lives in nixos/tests/wazuh-manager-image.<arch>.json, written by
-# nixos/tests/prefetch-manager-image.sh. checks.agent needs no manager and
+# lives in nixos/tests/common/wazuh-manager-image.<arch>.json, written by
+# nixos/tests/common/prefetch-manager-image.sh. checks.agent needs no manager and
 # stays fast.
 {
   pkgs,
@@ -19,7 +19,7 @@ pkgs.testers.runNixOSTest {
   name = "wazuh-agent-enrollment";
 
   nodes.manager = {
-    imports = [ ./manager-node.nix ];
+    imports = [ ../common/manager-node.nix ];
   };
 
   nodes.agent =
