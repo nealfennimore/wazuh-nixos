@@ -1,0 +1,39 @@
+--- a/src/shared_modules/utils/homedirHelper.hpp
++++ b/src/shared_modules/utils/homedirHelper.hpp
+@@ -13,4 +13,5 @@
+ #define _HOMEDIR_HPP
+
++#include <cstdlib>
+ #include <filesystem>
+
+@@ -22,19 +23,20 @@
+         std::error_code ec;
+
+-        homeDir = std::filesystem::read_symlink("/proc/self/exe", ec).parent_path();
+-        if (homeDir.filename() == "bin")
++        // Nix stores executables separately from mutable runtime state.
++        const char* envHome = std::getenv("WAZUH_HOME");
++        if (envHome != nullptr)
+         {
+-            homeDir.remove_filename();
++            homeDir = envHome;
+         }
+-        if (ec)
++        else
+         {
+-            const char* envHome = std::getenv("WAZUH_HOME");
+-            if (envHome != nullptr)
+-            {
+-                homeDir = envHome;
+-            }
+-            else
++            homeDir = std::filesystem::read_symlink("/proc/self/exe", ec).parent_path();
++            if (ec)
+             {
+                 throw std::runtime_error(ec.message());
++            }
++            if (homeDir.filename() == "bin")
++            {
++                homeDir.remove_filename();
+             }
+         }
