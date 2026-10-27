@@ -3,6 +3,7 @@
 #
 #   pki = import ./common/pki.nix { inherit pkgs; };
 #   pki.ca            # CA certificate
+#   pki.wrongCa       # an unrelated CA, for wrong-CA rejection tests
 #   pki.<node>.cert   # node certificate, SAN = DNS:<node>
 #   pki.<node>.key    # node key, PKCS#8 (the indexer rejects PKCS#1)
 #
@@ -31,6 +32,13 @@ let
       -subj "/OU=Wazuh/O=Wazuh/CN=wazuh-test-ca" \
       -keyout ca.key -out ca.pem
 
+    # An unrelated CA. A client that trusts only this CA must reject every node
+    # certificate. Tests use it to prove that verification is on.
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+      -subj "/OU=Wazuh/O=Wazuh/CN=wazuh-test-wrong-ca" \
+      -keyout wrong-ca.key -out wrong-ca.pem
+    rm wrong-ca.key
+
     ${lib.concatMapStrings (node: ''
       openssl req -newkey rsa:2048 -nodes \
         -subj "/OU=Wazuh/O=Wazuh/CN=${node}" \
@@ -46,6 +54,7 @@ let
 in
 {
   ca = "${out}/ca.pem";
+  wrongCa = "${out}/wrong-ca.pem";
   drv = out;
 }
 // lib.genAttrs nodes (node: {
