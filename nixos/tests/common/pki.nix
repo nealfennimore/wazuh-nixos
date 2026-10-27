@@ -7,7 +7,8 @@
 #   pki.<node>.cert   # node certificate, SAN = DNS:<node>
 #   pki.<node>.key    # node key, PKCS#8 (the indexer rejects PKCS#1)
 #
-# Nodes: server, indexer, dashboard, agent, plus "admin". The indexer's
+# Nodes: server, indexer, indexer2, dashboard, agent, plus "admin". indexer2
+# is the second node in the indexer test. The indexer's
 # securityadmin tool authenticates with the admin certificate.
 #
 # Do not use these keys outside tests. They are in the world-readable store.
@@ -16,6 +17,7 @@
   nodes ? [
     "server"
     "indexer"
+    "indexer2"
     "dashboard"
     "agent"
     "admin"
