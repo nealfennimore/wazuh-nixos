@@ -33,7 +33,7 @@ in pkgs.testers.runNixOSTest {
         managers = [ {
           url = "https://server";
           ca = pki.ca;
-          usernameFile = managerUser;
+          usernameFile = "${managerUser}";
           passwordFile = "${fixture.secrets}/password";
         } ];
       };
