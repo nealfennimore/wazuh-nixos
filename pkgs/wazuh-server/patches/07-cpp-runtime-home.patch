@@ -3,15 +3,15 @@
 @@ -12,6 +12,7 @@
  #ifndef _HOMEDIR_HPP
  #define _HOMEDIR_HPP
- 
+
 +#include <cstdlib>
  #include <filesystem>
- 
+
  namespace Utils
 @@ -21,21 +22,22 @@
          std::filesystem::path homeDir;
          std::error_code ec;
- 
+
 -        homeDir = std::filesystem::read_symlink("/proc/self/exe", ec).parent_path();
 -        if (homeDir.filename() == "bin")
 +        // Nix stores executables separately from mutable runtime state.
@@ -40,4 +40,4 @@
 +                homeDir.remove_filename();
              }
          }
- 
+
