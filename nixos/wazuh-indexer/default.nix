@@ -5,8 +5,14 @@ let
   home = "${cfg.package}/share/wazuh-indexer";
   runtime = "/run/wazuh-indexer";
   fileOption = description: mkOption { type = types.str; inherit description; };
+  requestedAddresses = lib.toList cfg.listenAddress;
+  # NixOS resolves its own hostname to 127.0.0.2. Keep this loopback binding
+  # even for an explicit LAN bind, so the admin connection verifies that DNS
+  # name without requiring a private IP SAN or disabling hostname checks.
+  bindAddresses = lib.unique (requestedAddresses
+    ++ lib.optional (!(builtins.elem "0.0.0.0" requestedAddresses)) "127.0.0.2");
   settings = cfg.settings // {
-    "network.host" = cfg.listenAddress;
+    "network.host" = bindAddresses;
     "http.port" = cfg.port;
     "transport.port" = cfg.transportPort;
     "node.name" = cfg.nodeName;
@@ -51,7 +57,7 @@ in {
   options.services.wazuh-indexer = {
     enable = mkEnableOption "the Wazuh indexer";
     package = mkOption { type = types.package; default = pkgs.callPackage ../../pkgs/wazuh-indexer { }; defaultText = lib.literalExpression "pkgs.callPackage ../../pkgs/wazuh-indexer { }"; };
-    listenAddress = mkOption { type = types.either types.str (types.listOf types.str); default = [ "127.0.0.1" "127.0.0.2" ]; description = "Bind addresses. Defaults cover localhost and the NixOS hostname loopback address, so securityadmin can verify the node hostname without exposing a network port."; };
+    listenAddress = mkOption { type = types.either types.str (types.listOf types.str); default = [ "127.0.0.1" "127.0.0.2" ]; description = "Bind addresses. Defaults cover localhost and the NixOS hostname loopback address. The module also retains 127.0.0.2 for explicit interface binds, so securityadmin can verify the node hostname. A 0.0.0.0 wildcard already covers it."; };
     port = mkOption { type = types.port; default = 9200; };
     transportPort = mkOption { type = types.port; default = 9300; };
     openFirewall = mkEnableOption "the indexer HTTP firewall port (transport remains explicit)";

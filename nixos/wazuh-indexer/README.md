@@ -2,7 +2,8 @@
 
 Import this directory as a NixOS module. It is independent of the manager and
 dashboard modules and defaults to HTTPS on loopback addresses 127.0.0.1 and 127.0.0.2, port 9200, with no firewall
-opening. `openFirewall` opens HTTP only; cluster transport rules are explicit.
+opening. Explicit interface binds retain 127.0.0.2 for hostname-verified local
+security administration. `openFirewall` opens HTTP only; cluster transport rules are explicit.
 
 Required options under `services.wazuh-indexer`:
 

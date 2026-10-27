@@ -41,7 +41,7 @@ in pkgs.testers.runNixOSTest {
   };
   testScript = ''
     start_all()
-    indexer.wait_for_unit("wazuh-indexer-security.service")
+    indexer.wait_until_succeeds("systemctl is-active wazuh-indexer-security.service", timeout=300)
     server.wait_for_unit("test-api.service")
     dashboard.wait_for_unit("wazuh-dashboard.service")
     dashboard.wait_for_open_port(5601)
