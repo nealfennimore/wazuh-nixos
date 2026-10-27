@@ -51,3 +51,5 @@ This executes the actual Python path function with a store-shaped __file__,
 checks each daemon's removed-chroot negative control, and runs the installer
 preparation against real upstream files, including shell syntax checks. The
 C++ executable probe requires a compiler and runs only in the package check.
+
+Patch 09 adds `-include cstdint` and `-DFAIL_ON_WARNINGS=OFF` to the rocksdb CMake invocation in `src/Makefile`. GCC 15 stopped including `<cstdint>` through other libstdc++ headers, and the vendored rocksdb headers rely on that. Every member that the compiler then reports as missing returns `uint64_t`. Retire the patch when the vendored rocksdb includes `<cstdint>` itself. The agent build never compiles rocksdb, so the agent is not affected.

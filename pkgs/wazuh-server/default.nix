@@ -20,7 +20,14 @@ agent.overrideAttrs (old: {
   nativeBuildInputs = old.nativeBuildInputs ++ [ autoPatchelfHook ];
   buildInputs = old.buildInputs ++ [ bzip2 gdbm libffi libxcrypt ncurses readline sqlite xz ];
   makeFlags = [ "-C src" "TARGET=server" "INSTALLDIR=$(out)" "PYTHON_SOURCE=yes" "CURL=false" ];
-  patches = old.patches ++ [ ./patches/07-cpp-runtime-home.patch ./patches/08-python-runtime-home.patch ];
+  patches = old.patches ++ [
+    ./patches/07-cpp-runtime-home.patch
+    ./patches/08-python-runtime-home.patch
+    # GCC 15 no longer includes <cstdint> through other libstdc++ headers, and
+    # the vendored rocksdb headers rely on that. Server-only: TARGET=agent
+    # never builds rocksdb.
+    ./patches/09-rocksdb-gcc15-cstdint.patch
+  ];
   unpackPhase = old.unpackPhase + ''
     ${lib.concatMapStringsSep "\n" (dep: "tar -xzf ${dep} -C src/external") serverDependencies}
     test -f src/external/cpython/configure
