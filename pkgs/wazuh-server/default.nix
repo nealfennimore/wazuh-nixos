@@ -19,20 +19,8 @@ agent.overrideAttrs (old: {
   runtimeDependencies = [ systemd ];
   nativeBuildInputs = old.nativeBuildInputs ++ [ autoPatchelfHook ];
   buildInputs = old.buildInputs ++ [ bzip2 gdbm libffi libxcrypt ncurses readline sqlite xz ];
-  makeFlags = [
-    "-C src"
-    "TARGET=server"
-    "INSTALLDIR=$(out)"
-    "PYTHON_SOURCE=yes"
-    "CURL=false"
-    # GCC 15 no longer includes <cstdint> through other libstdc++ headers. 84
-    # first-party headers and the vendored rocksdb use uintN_t without it.
-    # A make command-line CXX overrides the Makefile's own CXX=g++, reaches
-    # every recipe environment, and CMake splits the trailing argument into
-    # CMAKE_CXX_COMPILER_ARG1, so sub-projects that replace CMAKE_CXX_FLAGS
-    # keep it. It touches g++ only: clang compiles the BPF object as C.
-    "CXX=g++ -include cstdint"
-  ];
+  makeFlags = [ "-C src" "TARGET=server" "INSTALLDIR=$(out)" "PYTHON_SOURCE=yes" "CURL=false" ];
+
   patches = old.patches ++ [
     ./patches/07-cpp-runtime-home.patch
     ./patches/08-python-runtime-home.patch
@@ -53,6 +41,14 @@ agent.overrideAttrs (old: {
     patchShebangs --build src/external
   '';
   preBuild = ''
+    # GCC 15 no longer includes <cstdint> through other libstdc++ headers. 84
+    # first-party headers and the vendored rocksdb use uintN_t without it.
+    # A make command-line CXX overrides the Makefile's own CXX=g++, reaches
+    # every recipe environment, and CMake splits the trailing argument into
+    # CMAKE_CXX_COMPILER_ARG1, so sub-projects that replace CMAKE_CXX_FLAGS
+    # keep it. It touches g++ only: clang compiles the BPF object as C.
+    # makeFlags is word-split by stdenv; the array keeps the space intact.
+    makeFlagsArray+=("CXX=g++ -include cstdint")
     export PIP_INDEX_URL="file://$PWD/src/external/cpython/Dependencies/simple"
     # Keep the local PEP 503 index for nested pip build-isolation processes.
     make -C src TARGET=server PYTHON_SOURCE=yes INSTALLDIR="$out" CURL=false settings
