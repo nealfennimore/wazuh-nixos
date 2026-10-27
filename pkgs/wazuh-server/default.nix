@@ -1,5 +1,5 @@
 { autoPatchelfHook, bzip2, callPackage, fetchFromGitHub, fetchurl, gdbm, lib, libffi,
-  libxcrypt, ncurses, python312, readline, sqlite, stdenv, xz }:
+  libxcrypt, ncurses, python312, readline, sqlite, stdenv, systemd, xz }:
 let
   common = import ../common { inherit fetchFromGitHub fetchurl lib; };
   serverDependencies = import ./dependencies.nix {
@@ -14,6 +14,9 @@ agent.overrideAttrs (old: {
   # Runtime wrappers intentionally reference /var/ossec; only build scripts
   # have their shebangs rewritten below.
   dontPatchShebangs = true;
+  # logcollector dlopens libsystemd.so.0, so shrink-rpath cannot infer it
+  # from DT_NEEDED. autoPatchelf adds this path after the shrink hook.
+  runtimeDependencies = [ systemd ];
   nativeBuildInputs = old.nativeBuildInputs ++ [ autoPatchelfHook ];
   buildInputs = old.buildInputs ++ [ bzip2 gdbm libffi libxcrypt ncurses readline sqlite xz ];
   makeFlags = [ "-C src" "TARGET=server" "INSTALLDIR=$(out)" "PYTHON_SOURCE=yes" "CURL=false" ];

@@ -4,7 +4,13 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
-base_url="${BASE_URL:-https://packages.wazuh.com/deps/54/libraries/sources}"
+# Read the single shared dependency pin; fail if its format changes.
+dependency_version="$(sed -n 's/^  dependencyVersion = "\([0-9][0-9]*\)";$/\1/p' "$script_dir/../common/default.nix")"
+if [[ ! "$dependency_version" =~ ^[0-9]+$ ]]; then
+  echo "Cannot read dependencyVersion from pkgs/common/default.nix" >&2
+  exit 1
+fi
+base_url="${BASE_URL:-https://packages.wazuh.com/deps/${dependency_version}/libraries/sources}"
 manifest="$work_dir/dependency-hashes.json"
 printf '{\n' > "$manifest"
 separator=''
@@ -19,8 +25,7 @@ for name in cpython_x86_64 cpython_arm64 jemalloc flatbuffers simdjson; do
     echo "Unexpected archive root for $name (expected $expected)" >&2
     exit 1
   fi
-  digest="$(sha256sum "$work_dir/$name.tar.gz" | cut -d ' ' -f 1)"
-  sri="$(printf '%s' "$digest" | xxd -r -p | base64 | tr -d '\n')"
+  sri="$(openssl dgst -sha256 -binary "$work_dir/$name.tar.gz" | base64 | tr -d '\n')"
   printf '%s  "%s": "sha256-%s"' "$separator" "$name" "$sri" >> "$manifest"
   separator=$',\n'
 done

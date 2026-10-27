@@ -12,6 +12,10 @@ pkgs.runCommand "wazuh-server-package-check" {
   test -s "$package/ruleset/rules/0010-rules_config.xml"
   test -s "$package/share/wazuh-server/ossec-server.conf"
 
+  # dlopen dependencies must survive normal fixup even without DT_NEEDED.
+  readelf -d "$package/bin/wazuh-logcollector" > logcollector.dynamic
+  grep '(RUNPATH)' logcollector.dynamic | grep -F '${pkgs.systemd}/lib'
+
   # A different runtime home from the executable's parent distinguishes an
   # env-first helper from the upstream /proc/self/exe-first implementation.
   cat > probe.cpp <<'CPP'
