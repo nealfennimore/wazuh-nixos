@@ -1,0 +1,78 @@
+{ autoPatchelfHook, bzip2, callPackage, fetchFromGitHub, fetchurl, gdbm, lib, libffi,
+  libxcrypt, ncurses, python312, readline, sqlite, stdenv, xz }:
+let
+  common = import ../common { inherit fetchFromGitHub fetchurl lib; };
+  serverDependencies = import ./dependencies.nix {
+    inherit fetchurl stdenv;
+    inherit (common) dependencyVersion;
+  };
+  agent = callPackage ../wazuh-agent { };
+in
+agent.overrideAttrs (old: {
+  pname = "wazuh-server";
+  dontFixup = false;
+  # Runtime wrappers intentionally reference /var/ossec; only build scripts
+  # have their shebangs rewritten below.
+  dontPatchShebangs = true;
+  nativeBuildInputs = old.nativeBuildInputs ++ [ autoPatchelfHook ];
+  buildInputs = old.buildInputs ++ [ bzip2 gdbm libffi libxcrypt ncurses readline sqlite xz ];
+  makeFlags = [ "-C src" "TARGET=server" "INSTALLDIR=$(out)" "PYTHON_SOURCE=yes" "CURL=false" ];
+  patches = old.patches ++ [ ./patches/07-cpp-runtime-home.patch ./patches/08-python-runtime-home.patch ];
+  unpackPhase = old.unpackPhase + ''
+    ${lib.concatMapStringsSep "\n" (dep: "tar -xzf ${dep} -C src/external") serverDependencies}
+    test -f src/external/cpython/configure
+    test -d src/external/cpython/Dependencies/simple
+  '';
+  # The agent preparation stays identical. Server-only changes are applied
+  # after it, without changing the agent's derivation or runtime behavior.
+  prePatch = old.prePatch + ''
+    ${python312}/bin/python3 ${./prepare-install.py}
+    chmod -R u+rwX src/external
+    patchShebangs --build src/external
+  '';
+  preBuild = ''
+    export PIP_INDEX_URL="file://$PWD/src/external/cpython/Dependencies/simple"
+    # Keep the local PEP 503 index for nested pip build-isolation processes.
+    make -C src TARGET=server PYTHON_SOURCE=yes INSTALLDIR="$out" CURL=false settings
+    # All dependencies were extracted from fixed-output inputs. Do not run
+    # upstream deps, whose recipes probe network precompiled mirrors.
+  '';
+  installPhase = ''
+    runHook preInstall
+    mkdir -p "$out"/{bin,etc/shared,queue,var,wodles,logs,lib,tmp,agentless,active-response}
+    chmod u+x install.sh src/init/fw-check.sh
+    INSTALLDIR="$out" USER_DIR="$out" ./install.sh binary-install
+    # install.sh is not fail-fast. Assert its essential results explicitly.
+    for daemon in analysisd remoted monitord db authd modulesd logcollector syscheckd execd keystore; do
+      test -x "$out/bin/wazuh-$daemon"
+    done
+    for response in firewall-drop route-null wazuh-slack host-deny disable-account; do
+      test -f "$out/active-response/bin/$response"
+    done
+    chmod u+x "$out"/bin/* "$out"/active-response/bin/*
+    rm -f "$out/active-response/bin/restart-wazuh" "$out/active-response/bin/restart.sh"
+    rm -rf "$out/src"
+    runHook postInstall
+  '';
+  postInstall = ''
+    install -Dm444 etc/ossec-server.conf "$out/share/wazuh-server/ossec-server.conf"
+    # Keep the patched helper available to the executable package check.
+    # installPhase removes src, so the source guard/probe is staged preInstall.
+    chmod -R u+rwX,go+rX "$out"
+    rm -f "$out/etc/sslmanager.key" "$out/etc/sslmanager.cert"
+    test -x "$out/framework/python/bin/python3"
+    test -f "$out/api/scripts/wazuh_apid.py"
+  '';
+  preInstall = ''
+    mkdir -p "$out/share/wazuh-server/test-support"
+    cp src/shared_modules/utils/homedirHelper.hpp "$out/share/wazuh-server/test-support/"
+    ${python312}/bin/python3 ${./check-chroot-source.py} . > "$out/share/wazuh-server/test-support/chroot-source-check"
+    # upstream install.sh calls make wpython and framework/api installs.
+    export PIP_INDEX_URL="file://$PWD/src/external/cpython/Dependencies/simple"
+    export PIP_CONFIG_FILE=/dev/null
+    export PIP_EXTRA_INDEX_URL=""
+    unset PIP_NO_INDEX PIP_FIND_LINKS
+    export PIP_DISABLE_PIP_VERSION_CHECK=1
+  '';
+  meta = old.meta // { description = "Wazuh server (manager and API)"; };
+})

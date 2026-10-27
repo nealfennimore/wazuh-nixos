@@ -1,0 +1,17 @@
+--- a/framework/wazuh/core/common.py
++++ b/framework/wazuh/core/common.py
+@@ -24,6 +24,14 @@
+     str
+         Path where Wazuh is installed or empty string if there is no framework in the environment.
+     """
++    # Python resolves its prefix through store symlinks. Keep mutable state
++    # under the same explicit home used by the native daemons.
++    runtime_home = os.environ.get('WAZUH_HOME')
++    if runtime_home is not None:
++        if not os.path.isabs(runtime_home) or not os.path.isdir(runtime_home):
++            raise ValueError('WAZUH_HOME must name an existing absolute directory')
++        return runtime_home
++
+     abs_path = os.path.abspath(os.path.dirname(__file__))
+     allparts = []
+     while 1:
