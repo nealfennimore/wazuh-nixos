@@ -23,6 +23,8 @@ pkgs.runCommand "wazuh-server-package-check" {
   }
   CPP
   c++ -std=c++17 -I "$package/share/wazuh-server/test-support" probe.cpp -o home-probe
+  # The probe is directly in the working directory, not under bin/.
+  test "$(env -u WAZUH_HOME ./home-probe)" = "$PWD"
   mkdir runtime
   runtime="$PWD/runtime"
   test "$(WAZUH_HOME="$runtime" ./home-probe)" = "$runtime"
