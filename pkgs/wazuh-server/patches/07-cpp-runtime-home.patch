@@ -1,15 +1,12 @@
 --- a/src/shared_modules/utils/homedirHelper.hpp
 +++ b/src/shared_modules/utils/homedirHelper.hpp
-@@ -12,6 +12,7 @@
- #ifndef _HOMEDIR_HPP
+@@ -13,4 +13,5 @@
  #define _HOMEDIR_HPP
 
 +#include <cstdlib>
  #include <filesystem>
 
- namespace Utils
-@@ -21,21 +22,22 @@
-         std::filesystem::path homeDir;
+@@ -22,19 +23,20 @@
          std::error_code ec;
 
 -        homeDir = std::filesystem::read_symlink("/proc/self/exe", ec).parent_path();
@@ -40,4 +37,3 @@
 +                homeDir.remove_filename();
              }
          }
-
