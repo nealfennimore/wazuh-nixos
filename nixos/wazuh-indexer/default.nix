@@ -51,7 +51,7 @@ in {
   options.services.wazuh-indexer = {
     enable = mkEnableOption "the Wazuh indexer";
     package = mkOption { type = types.package; default = pkgs.callPackage ../../pkgs/wazuh-indexer { }; defaultText = lib.literalExpression "pkgs.callPackage ../../pkgs/wazuh-indexer { }"; };
-    listenAddress = mkOption { type = types.str; default = "127.0.0.1"; };
+    listenAddress = mkOption { type = types.either types.str (types.listOf types.str); default = [ "127.0.0.1" "127.0.0.2" ]; description = "Bind addresses. Defaults cover localhost and the NixOS hostname loopback address, so securityadmin can verify the node hostname without exposing a network port."; };
     port = mkOption { type = types.port; default = 9200; };
     transportPort = mkOption { type = types.port; default = 9300; };
     openFirewall = mkEnableOption "the indexer HTTP firewall port (transport remains explicit)";
@@ -131,6 +131,7 @@ in {
     };
     systemd.services.wazuh-indexer-security = {
       description = "Apply Wazuh indexer security configuration";
+      unitConfig.StartLimitIntervalSec = 0;
       after = [ "wazuh-indexer.service" ];
       requires = [ "wazuh-indexer.service" ];
       partOf = [ "wazuh-indexer.service" ];
@@ -148,6 +149,7 @@ in {
       '';
       serviceConfig = hardening // {
         Type = "oneshot";
+        DynamicUser = true;
         RemainAfterExit = true;
         RuntimeDirectory = "wazuh-indexer-security";
         RuntimeDirectoryMode = "0700";

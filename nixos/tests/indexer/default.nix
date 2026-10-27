@@ -8,8 +8,24 @@ in pkgs.testers.runNixOSTest {
     imports = [ fixture.module ];
     environment.systemPackages = [ pkgs.curl pkgs.jq ];
   };
+  # A second isolated indexer exercises the production loopback defaults. The
+  # test driver's generated LAN host mapping is replaced with NixOS's normal
+  # local hostname mapping, so this specifically catches 127.0.0.1-only binds.
+  nodes.dashboard = { lib, ... }: {
+    imports = [ (import ./fixture.nix { inherit pkgs pki; nodeName = "dashboard"; defaultListen = true; }).module ];
+    networking.hosts = lib.mkForce {
+      "127.0.0.2" = [ "dashboard" ];
+      "127.0.0.1" = [ "localhost" ];
+      "::1" = [ "localhost" ];
+    };
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
+  };
   testScript = ''
     start_all()
+    dashboard.wait_for_unit("wazuh-indexer-security.service")
+    dashboard.succeed("curl --fail --silent --cacert ${pki.ca} -u 'admin:Test-password-42!' https://dashboard:9200")
+    dashboard.succeed("curl --fail --silent --cacert ${pki.ca} --resolve dashboard:9200:127.0.0.1 -u 'admin:Test-password-42!' https://dashboard:9200")
+    indexer.fail("curl --connect-timeout 3 --fail --silent --cacert ${pki.ca} -u 'admin:Test-password-42!' https://dashboard:9200")
     indexer.wait_for_unit("wazuh-indexer.service")
     indexer.wait_for_unit("wazuh-indexer-security.service")
     base = "curl --fail --silent --show-error --cacert ${pki.ca} -u 'admin:Test-password-42!'"

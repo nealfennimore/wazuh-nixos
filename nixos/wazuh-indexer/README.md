@@ -1,7 +1,7 @@
 # Wazuh indexer
 
 Import this directory as a NixOS module. It is independent of the manager and
-dashboard modules and defaults to HTTPS on loopback port 9200, with no firewall
+dashboard modules and defaults to HTTPS on loopback addresses 127.0.0.1 and 127.0.0.2, port 9200, with no firewall
 opening. `openFirewall` opens HTTP only; cluster transport rules are explicit.
 
 Required options under `services.wazuh-indexer`:
@@ -48,4 +48,6 @@ it covers disabled, isolated and co-located modules plus invalid configuration.
 The rendering check imports only Python source paths, never a release package.
 Neither check proves the real services start. The indexer VM test covers TLS,
 authentication, demo-password rejection, document persistence across restart,
-key permissions and service identity.
+key permissions and service identity. A second node exercises the default loopback
+bind and hostname-verified securityadmin connection, including rejection from a
+remote node.

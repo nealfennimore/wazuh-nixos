@@ -1,5 +1,5 @@
 # Shared by the isolated indexer/dashboard tests and available to stack tests.
-{ pkgs, pki }:
+{ pkgs, pki, nodeName ? "indexer", defaultListen ? false }:
 let
   secrets = pkgs.runCommand "wazuh-indexer-test-users" {
     nativeBuildInputs = [ (pkgs.python3.withPackages (p: [ p.bcrypt ])) ];
@@ -20,12 +20,12 @@ in {
     virtualisation.memorySize = 3072;
     services.wazuh-indexer = {
       enable = true;
-      listenAddress = "0.0.0.0";
+      listenAddress = pkgs.lib.mkIf (!defaultListen) "0.0.0.0";
       openFirewall = true;
-      nodeName = "indexer";
+      inherit nodeName;
       heapSize = "512m";
-      tls = { ca = pki.ca; certificate = pki.indexer.cert; key = pki.indexer.key; };
-      nodeDistinguishedNames = [ "CN=indexer,O=Wazuh,OU=Wazuh" ];
+      tls = { ca = pki.ca; certificate = pki.${nodeName}.cert; key = pki.${nodeName}.key; };
+      nodeDistinguishedNames = [ "CN=${nodeName},O=Wazuh,OU=Wazuh" ];
       admin = {
         certificate = pki.admin.cert;
         key = pki.admin.key;
