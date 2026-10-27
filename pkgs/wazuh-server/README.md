@@ -52,4 +52,14 @@ checks each daemon's removed-chroot negative control, and runs the installer
 preparation against real upstream files, including shell syntax checks. The
 C++ executable probe requires a compiler and runs only in the package check.
 
-Patch 09 adds `-include cstdint` and `-DFAIL_ON_WARNINGS=OFF` to the rocksdb CMake invocation in `src/Makefile`. GCC 15 stopped including `<cstdint>` through other libstdc++ headers, and the vendored rocksdb headers rely on that. Every member that the compiler then reports as missing returns `uint64_t`. Retire the patch when the vendored rocksdb includes `<cstdint>` itself. The agent build never compiles rocksdb, so the agent is not affected.
+GCC 15 no longer includes `<cstdint>` through other libstdc++ headers. The vendored
+rocksdb and 84 first-party headers use `uintN_t` without including it, so the
+compiler reports missing declarations and then "has no member named" for every
+use. The derivation passes `CXX=g++ -include cstdint` on the make command line.
+That overrides the Makefile's own `CXX=g++`, reaches every recipe environment, and
+CMake splits the argument into `CMAKE_CXX_COMPILER_ARG1`, which survives
+sub-projects that replace `CMAKE_CXX_FLAGS`. It applies to g++ only; clang
+compiles the BPF object as C and must not receive it. Patch 09 separately turns
+off `FAIL_ON_WARNINGS` for rocksdb, which builds with `-Werror`. Retire both when
+the sources include `<cstdint>` themselves. The agent never builds rocksdb and
+its build is unchanged.

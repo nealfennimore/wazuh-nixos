@@ -19,14 +19,26 @@ agent.overrideAttrs (old: {
   runtimeDependencies = [ systemd ];
   nativeBuildInputs = old.nativeBuildInputs ++ [ autoPatchelfHook ];
   buildInputs = old.buildInputs ++ [ bzip2 gdbm libffi libxcrypt ncurses readline sqlite xz ];
-  makeFlags = [ "-C src" "TARGET=server" "INSTALLDIR=$(out)" "PYTHON_SOURCE=yes" "CURL=false" ];
+  makeFlags = [
+    "-C src"
+    "TARGET=server"
+    "INSTALLDIR=$(out)"
+    "PYTHON_SOURCE=yes"
+    "CURL=false"
+    # GCC 15 no longer includes <cstdint> through other libstdc++ headers. 84
+    # first-party headers and the vendored rocksdb use uintN_t without it.
+    # A make command-line CXX overrides the Makefile's own CXX=g++, reaches
+    # every recipe environment, and CMake splits the trailing argument into
+    # CMAKE_CXX_COMPILER_ARG1, so sub-projects that replace CMAKE_CXX_FLAGS
+    # keep it. It touches g++ only: clang compiles the BPF object as C.
+    "CXX=g++ -include cstdint"
+  ];
   patches = old.patches ++ [
     ./patches/07-cpp-runtime-home.patch
     ./patches/08-python-runtime-home.patch
-    # GCC 15 no longer includes <cstdint> through other libstdc++ headers, and
-    # the vendored rocksdb headers rely on that. Server-only: TARGET=agent
-    # never builds rocksdb.
-    ./patches/09-rocksdb-gcc15-cstdint.patch
+    # rocksdb builds with -Werror and GCC 15 adds warnings. The <cstdint>
+    # include itself comes from the CXX make flag below, for every C++ file.
+    ./patches/09-rocksdb-no-werror.patch
   ];
   unpackPhase = old.unpackPhase + ''
     ${lib.concatMapStringsSep "\n" (dep: "tar -xzf ${dep} -C src/external") serverDependencies}
