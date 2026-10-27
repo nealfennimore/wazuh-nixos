@@ -15,10 +15,10 @@ in pkgs.testers.runNixOSTest {
   # A second isolated indexer exercises the production loopback defaults. The
   # test driver's generated LAN host mapping is replaced with NixOS's normal
   # local hostname mapping, so this specifically catches 127.0.0.1-only binds.
-  nodes.dashboard = { lib, ... }: {
-    imports = [ (import ./fixture.nix { inherit pkgs pki; nodeName = "dashboard"; defaultListen = true; }).module ];
+  nodes.indexer2 = { lib, ... }: {
+    imports = [ (import ./fixture.nix { inherit pkgs pki; nodeName = "indexer2"; defaultListen = true; }).module ];
     networking.hosts = lib.mkForce {
-      "127.0.0.2" = [ "dashboard" ];
+      "127.0.0.2" = [ "indexer2" ];
       "127.0.0.1" = [ "localhost" ];
       "::1" = [ "localhost" ];
     };
@@ -26,13 +26,13 @@ in pkgs.testers.runNixOSTest {
   };
   testScript = ''
     start_all()
-    dashboard.wait_until_succeeds("systemctl is-active wazuh-indexer-security.service", timeout=300)
-    dashboard.succeed("curl --fail --silent --cacert ${pki.ca} -u 'admin:Test-password-42!' https://dashboard:9200")
-    dashboard.succeed("curl --fail --silent --cacert ${pki.ca} --resolve dashboard:9200:127.0.0.1 -u 'admin:Test-password-42!' https://dashboard:9200")
-    indexer.fail("curl --connect-timeout 3 --fail --silent --cacert ${pki.ca} -u 'admin:Test-password-42!' https://dashboard:9200")
+    indexer2.wait_until_succeeds("systemctl is-active wazuh-indexer-security.service", timeout=300)
+    indexer2.succeed("curl --fail --silent --cacert ${pki.ca} -u 'admin:Test-password-42!' https://indexer2:9200")
+    indexer2.succeed("curl --fail --silent --cacert ${pki.ca} --resolve indexer2:9200:127.0.0.1 -u 'admin:Test-password-42!' https://indexer2:9200")
+    indexer.fail("curl --connect-timeout 3 --fail --silent --cacert ${pki.ca} -u 'admin:Test-password-42!' https://indexer2:9200")
     indexer.wait_for_unit("wazuh-indexer.service")
     indexer.wait_until_succeeds("systemctl is-active wazuh-indexer-security.service", timeout=300)
-    dashboard.succeed("curl --fail --silent --cacert ${pki.ca} --resolve indexer:9200:192.168.1.10 -u 'admin:Test-password-42!' https://indexer:9200")
+    indexer2.succeed("curl --fail --silent --cacert ${pki.ca} --resolve indexer:9200:192.168.1.10 -u 'admin:Test-password-42!' https://indexer:9200")
     base = "curl --fail --silent --show-error --cacert ${pki.ca} -u 'admin:Test-password-42!'"
     indexer.wait_until_succeeds(base + " 'https://indexer:9200/_cluster/health?wait_for_status=yellow&timeout=5s' | jq -e '.status == \"yellow\" or .status == \"green\"'")
     indexer.succeed(base + " -H 'Content-Type: application/json' -XPUT 'https://indexer:9200/nixos-test/_doc/1?refresh=true' -d '{\"message\":\"persistent\"}'")
