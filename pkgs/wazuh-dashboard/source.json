@@ -1,1 +1,8 @@
-{"version":"4.14.8","revision":"1","hashes":{}}
+{
+  "version": "4.14.8",
+  "revision": "1",
+  "hashes": {
+    "amd64": "sha256-8kEwhbISleaBzKC9bio2AXRBfSQbr76rX+doXi2G8tQ=",
+    "arm64": "sha256-vBO5GdSEmcNH+Y2vkW8okNMPiYppfAa3Uw2yXWEYeiw="
+  }
+}

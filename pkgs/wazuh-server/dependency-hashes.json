@@ -1,0 +1,7 @@
+{
+  "cpython_x86_64": "sha256-ZBzqzRvvtM7F/XDAUOGhx+2azcDazDYkZiwH7gShEwA=",
+  "cpython_arm64": "sha256-GNv1XthAbni1SQgJx2erPYWyiz0PKnfe/MNWCy9U02Y=",
+  "jemalloc": "sha256-KyLoWzUsffVQukCKQiUeUejf+myRqi4ftIBKsxf/vKA=",
+  "flatbuffers": "sha256-ylY+u1Ya6QiMe+yc4QHSGCtDztC6Z6CX0O4MFFEI9Vo=",
+  "simdjson": "sha256-8DNneHHbAjapYWA7y5/vMP8MZaTR+0lvqPrj+RyLVss="
+}
