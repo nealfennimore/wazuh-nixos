@@ -50,7 +50,7 @@ let
 in {
   options.services.wazuh-indexer = {
     enable = mkEnableOption "the Wazuh indexer";
-    package = mkOption { type = types.package; default = pkgs.callPackage ../../pkgs/wazuh-indexer { }; };
+    package = mkOption { type = types.package; default = pkgs.callPackage ../../pkgs/wazuh-indexer { }; defaultText = lib.literalExpression "pkgs.callPackage ../../pkgs/wazuh-indexer { }"; };
     listenAddress = mkOption { type = types.str; default = "127.0.0.1"; };
     port = mkOption { type = types.port; default = 9200; };
     transportPort = mkOption { type = types.port; default = 9300; };

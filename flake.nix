@@ -80,6 +80,14 @@
           inherit pkgs wazuhModule;
         };
 
+        # Fast component checks do not import release package derivations.
+        checks.component-evaluation = import ./nixos/tests/indexer/evaluation.nix {
+          inherit pkgs;
+        };
+        checks.component-rendering = import ./nixos/tests/dashboard/rendering.nix {
+          inherit pkgs;
+        };
+
         # Enrollment and delivery, against the Wazuh manager container image.
         # Kept separate from checks.agent on purpose: this one pulls a
         # multi-gigabyte image from Docker Hub and boots two VMs, and that

@@ -33,7 +33,7 @@ let
 in {
   options.services.wazuh-dashboard = {
     enable = mkEnableOption "the Wazuh dashboard";
-    package = mkOption { type = types.package; default = pkgs.callPackage ../../pkgs/wazuh-dashboard { }; };
+    package = mkOption { type = types.package; default = pkgs.callPackage ../../pkgs/wazuh-dashboard { }; defaultText = lib.literalExpression "pkgs.callPackage ../../pkgs/wazuh-dashboard { }"; };
     listenAddress = mkOption { type = types.str; default = "127.0.0.1"; };
     port = mkOption { type = types.port; default = 5601; };
     openFirewall = mkEnableOption "the dashboard HTTPS firewall port";
