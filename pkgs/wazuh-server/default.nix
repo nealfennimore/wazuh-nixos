@@ -121,6 +121,13 @@ agent.overrideAttrs (old: {
   '';
   postInstall = ''
     install -Dm444 etc/ossec-server.conf "$out/share/wazuh-server/ossec-server.conf"
+    # CPython's _ctypes links the vendored libffi shared object, soname
+    # libffi.so.6, from external/libffi/server/.libs. Upstream relies on the
+    # build host to provide that soname at runtime. nixpkgs libffi is .so.8,
+    # so autoPatchelf cannot satisfy it. Ship the vendored library next to
+    # the other Wazuh libraries, where autoPatchelf and $ORIGIN find it.
+    cp -a src/external/libffi/server/.libs/libffi.so.[0-9]* "$out/lib/"
+    test -f "$out/lib/libffi.so.6"
     # Keep the patched helper available to the executable package check.
     # installPhase removes src, so the source guard/probe is staged preInstall.
     chmod -R u+rwX,go+rX "$out"
