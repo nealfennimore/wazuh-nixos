@@ -51,6 +51,22 @@ agent.overrideAttrs (old: {
     ${python312}/bin/python3 ${./prepare-install.py}
     chmod -R u+rwX src/external
     patchShebangs --build src/external
+    # The cpython archive carries a Makefile generated on Wazuh's builder:
+    # prefix /var/wazuh-manager/framework/python and INSTALL=/usr/bin/install.
+    # It also carries a built interpreter, and build_python in src/Makefile
+    # skips ./configure when external/cpython/python exists. The first build
+    # therefore installed with the foreign prefix and failed on
+    # /usr/bin/install. Discard the generated state so build_python runs
+    # configure here, with --prefix=$out/framework/python and the
+    # sandbox's install.
+    if [ -f src/external/cpython/Makefile ]; then
+      make -C src/external/cpython distclean
+    fi
+    rm -f src/external/cpython/python src/external/cpython/Makefile \
+      src/external/cpython/config.status src/external/cpython/pyconfig.h
+    test ! -e src/external/cpython/python
+    test ! -e src/external/cpython/Makefile
+    test -x src/external/cpython/configure
   '';
   preBuild = ''
     # GCC 15 no longer includes <cstdint> through other libstdc++ headers. 84
