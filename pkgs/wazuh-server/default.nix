@@ -38,7 +38,7 @@ agent.overrideAttrs (old: {
     # skips dotfiles such as .gitignore and .github, so only chmod what the
     # copy produced.
     (cd "$src" && find . -type f -perm -u+x -print0) | while IFS= read -r -d '' f; do
-      [ -e "$f" ] && chmod u+x "$f"
+      if [ -e "$f" ]; then chmod u+x "$f"; fi
     done
     test -x src/analysisd/compiled_rules/register_rule.sh
     ${lib.concatMapStringsSep "\n" (dep: "tar -xzf ${dep} -C src/external") serverDependencies}
