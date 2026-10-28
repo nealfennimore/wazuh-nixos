@@ -3,21 +3,23 @@
 This is the native manager and API (`TARGET=server`). Alert shipping is owned
 by the NixOS server module; indexer and dashboard have separate packages.
 
-This package is a draft until built. It is deliberately not exported from
-flake.nix while verified server dependency hashes are missing. Run
-`./pkgs/wazuh-server/prefetch-dependencies.sh` on a host that can reach
-packages.wazuh.com, review `dependency-hashes.json`, and commit it. The script
-fetches both supported architectures and never changes the agent manifest.
-Then add these exports in the same commit:
-
-```nix
-packages.wazuh-server = pkgs.callPackage ./pkgs/wazuh-server { };
-checks.server-package = import ./pkgs/wazuh-server/package-check.nix { inherit pkgs; };
-```
+The package and `checks.server-package` are exported from `flake.nix`.
+Dependency hashes are committed in `dependency-hashes.json`. To refresh them,
+run `./pkgs/wazuh-server/prefetch-dependencies.sh` on a host that can reach
+packages.wazuh.com, review the manifest, and commit it. The script fetches both
+supported architectures and never changes the agent manifest. A complete server
+package build and the package check have not yet passed; exported attributes
+and verified downloads alone do not prove runtime behavior.
 
 The package reuses agent build preparation and shared inputs. It adds upstream's
-four manager dependencies, builds the bundled CPython source and installs the
-exact framework requirements from its local PEP 503 index. No nixpkgs Python
+four manager dependencies and rebuilds CPython from the bundled archive after
+discarding its shipped build state. The archive is not a plain source tree:
+it can contain a prebuilt interpreter and a Makefile configured for Wazuh's
+builder. The server preparation runs `distclean` when that Makefile exists,
+removes the interpreter and generated configuration, and asserts their absence.
+This forces upstream's `build_python` target to configure in the Nix sandbox
+with the package output prefix before compiling Python. The exact framework
+requirements are installed from the archive's local PEP 503 index. No nixpkgs Python
 substitution or dependency relaxation is used. The install-only adjustments
 remove ownership changes and certificate generation; activation owns runtime
 identities and TLS material. Normal fixup and autoPatchelf repair bundled ELF
