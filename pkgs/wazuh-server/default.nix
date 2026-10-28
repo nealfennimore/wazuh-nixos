@@ -34,8 +34,12 @@ agent.overrideAttrs (old: {
     # install path runs. The server Makefile also runs
     # ./analysisd/compiled_rules/register_rule.sh by path. Replay every
     # upstream execute bit instead of naming scripts one at a time, so the
-    # build sees the modes a git checkout has.
-    (cd "$src" && find . -type f -perm -u+x -print0) | xargs -0 chmod u+x
+    # build sees the modes a git checkout has. The copy uses "$src"/*, which
+    # skips dotfiles such as .gitignore and .github, so only chmod what the
+    # copy produced.
+    (cd "$src" && find . -type f -perm -u+x -print0) | while IFS= read -r -d '' f; do
+      [ -e "$f" ] && chmod u+x "$f"
+    done
     test -x src/analysisd/compiled_rules/register_rule.sh
     ${lib.concatMapStringsSep "\n" (dep: "tar -xzf ${dep} -C src/external") serverDependencies}
     test -f src/external/cpython/configure
