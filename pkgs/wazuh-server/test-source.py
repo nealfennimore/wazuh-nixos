@@ -74,6 +74,13 @@ class SourceBoundaries(unittest.TestCase):
                 data = (root / name).read_text()
                 self.assertNotRegex(data, r' -[og] (?:root|0|\$\{WAZUH_(?:USER|GROUP)\})')
             self.assertIn('.NOTPARALLEL: wpython', (root / 'src/Makefile').read_text())
+            makefile = (root / 'src/Makefile').read_text()
+            # The CPython configure line must carry the Nix include and library
+            # paths inside the quoted CPPFLAGS and LDFLAGS arguments.
+            self.assertIn('include ${CPYTHON_NIX_CPPFLAGS}" LIBS="-lwazuhext"', makefile)
+            self.assertIn('--disable-new-dtags ${CPYTHON_NIX_LDFLAGS}" CPPFLAGS="', makefile)
+            self.assertIn('wpython INSTALLDIR=${INSTALLDIR} TARGET=${INSTYPE} || exit 1\n',
+                          (root / 'src/init/inst-functions.sh').read_text())
             for name in ['install.sh', 'src/init/inst-functions.sh']:
                 result = subprocess.run(['bash', '-n', str(root / name)], capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr.decode())

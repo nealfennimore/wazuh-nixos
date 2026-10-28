@@ -1,5 +1,5 @@
 { autoPatchelfHook, bzip2, callPackage, fetchFromGitHub, fetchurl, gdbm, lib, libffi,
-  libxcrypt, ncurses, python312, readline, sqlite, stdenv, systemd, xz }:
+  libxcrypt, ncurses, python312, readline, sqlite, stdenv, systemd, xz, zlib }:
 let
   common = import ../common { inherit fetchFromGitHub fetchurl lib; };
   serverDependencies = import ./dependencies.nix {
@@ -7,6 +7,10 @@ let
     inherit (common) dependencyVersion;
   };
   agent = callPackage ../wazuh-agent { };
+  # Libraries CPython's optional modules link: zlib for ensurepip and every
+  # wheel, then bz2, lzma, readline, curses and gdbm. openssl, sqlite and
+  # libffi stay with the vendored copies the configure line already names.
+  cpythonInputs = [ bzip2 gdbm ncurses readline xz zlib ];
 in
 agent.overrideAttrs (old: {
   pname = "wazuh-server";
@@ -18,7 +22,11 @@ agent.overrideAttrs (old: {
   # from DT_NEEDED. autoPatchelf adds this path after the shrink hook.
   runtimeDependencies = [ systemd ];
   nativeBuildInputs = old.nativeBuildInputs ++ [ autoPatchelfHook ];
-  buildInputs = old.buildInputs ++ [ bzip2 gdbm libffi libxcrypt ncurses readline sqlite xz ];
+  buildInputs = old.buildInputs ++ [ bzip2 gdbm libffi libxcrypt ncurses readline sqlite xz zlib ];
+  # prepare-install.py splices these into the CPython configure arguments in
+  # src/Makefile. make reads them from the environment.
+  CPYTHON_NIX_CPPFLAGS = lib.concatMapStringsSep " " (p: "-I${lib.getDev p}/include") cpythonInputs;
+  CPYTHON_NIX_LDFLAGS = lib.concatMapStringsSep " " (p: "-L${lib.getLib p}/lib") cpythonInputs;
   makeFlags = [ "-C src" "TARGET=server" "INSTALLDIR=$(out)" "PYTHON_SOURCE=yes" "CURL=false" ];
 
   patches = old.patches ++ [

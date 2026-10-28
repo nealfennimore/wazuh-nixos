@@ -12,8 +12,22 @@ def replace_once(path, before, after):
 
 replace_once(Path('install.sh'), 'if [ ! "X$ME" = "Xroot" ]; then', 'if false; then')
 replace_once(Path('etc/preloaded-vars.conf'), 'USER_INSTALL_TYPE="agent"', 'USER_INSTALL_TYPE="server"')
+# build_python passes CPPFLAGS and LDFLAGS as configure arguments, which
+# override the environment. CPython's setup.py finds optional modules such
+# as zlib only through the -I and -L entries configure recorded, and a Nix
+# sandbox has no /usr/include. Append the store paths from the derivation.
+replace_once(Path('src/Makefile'), 'include" LIBS="-lwazuhext"',
+             'include ${CPYTHON_NIX_CPPFLAGS}" LIBS="-lwazuhext"')
+replace_once(Path('src/Makefile'), '--disable-new-dtags" CPPFLAGS="',
+             '--disable-new-dtags ${CPYTHON_NIX_LDFLAGS}" CPPFLAGS="')
 # TLS material must be supplied at runtime, never generated in a derivation.
 replace_once(Path('src/init/inst-functions.sh'), '\n    GenerateAuthCert\n', '\n    # Runtime TLS is supplied by the NixOS module.\n')
+# install.sh is not fail-fast. make wpython installs the interpreter, the pip
+# requirements and the wazuh and api packages. A failed step must stop the
+# build with its error at the end of the log, not leave a tree without them.
+replace_once(Path('src/init/inst-functions.sh'),
+             '    ${MAKEBIN} wpython INSTALLDIR=${INSTALLDIR} TARGET=${INSTYPE}\n',
+             '    ${MAKEBIN} wpython INSTALLDIR=${INSTALLDIR} TARGET=${INSTYPE} || exit 1\n')
 for name in ['src/init/inst-functions.sh', 'src/Makefile', 'framework/Makefile', 'api/Makefile']:
     path = Path(name)
     data = path.read_text()

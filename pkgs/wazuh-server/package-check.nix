@@ -42,6 +42,10 @@ pkgs.runCommand "wazuh-server-package-check" {
   ln -s "$package/framework" "$runtime/framework"
   WAZUH_HOME="$runtime" "$runtime/framework/python/bin/python3" - <<'PY'
   import os
+  # Optional CPython modules. zlib is what ensurepip and every wheel need;
+  # without it make install fails before pip exists.
+  import zlib, bz2, lzma, ssl, sqlite3, ctypes, hashlib
+  import pip
   import wazuh
   import api
   from wazuh.core import common
