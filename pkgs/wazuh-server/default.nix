@@ -29,6 +29,14 @@ agent.overrideAttrs (old: {
     ./patches/09-rocksdb-no-werror.patch
   ];
   unpackPhase = old.unpackPhase + ''
+    # The agent unpackPhase copies the tree with --no-preserve=all, which
+    # drops every execute bit, and it restores only the two scripts its own
+    # install path runs. The server Makefile also runs
+    # ./analysisd/compiled_rules/register_rule.sh by path. Replay every
+    # upstream execute bit instead of naming scripts one at a time, so the
+    # build sees the modes a git checkout has.
+    (cd "$src" && find . -type f -perm -u+x -print0) | xargs -0 chmod u+x
+    test -x src/analysisd/compiled_rules/register_rule.sh
     ${lib.concatMapStringsSep "\n" (dep: "tar -xzf ${dep} -C src/external") serverDependencies}
     test -f src/external/cpython/configure
     test -d src/external/cpython/Dependencies/simple
