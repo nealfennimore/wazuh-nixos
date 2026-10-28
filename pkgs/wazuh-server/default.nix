@@ -100,6 +100,25 @@ agent.overrideAttrs (old: {
     rm -rf "$out/src"
     runHook postInstall
   '';
+  # CMake records the build tree in the RPATH of every target it links, for
+  # example /build/src for libwazuhext. Upstream never installs through
+  # CMake, so those entries ride into the package, and the nixpkgs audit
+  # rejects them. Every daemon and library already carries $ORIGIN/../lib
+  # or $ORIGIN for runtime resolution, and autoPatchelf adds store paths in
+  # postFixup, so the build-tree entries are dead weight. Drop them before
+  # the fixup hooks run. Relocatable objects such as lib/modern.bpf.o have
+  # no RPATH, and patchelf fails on them, so they are skipped.
+  preFixup = ''
+    find "$out" -type f | while IFS= read -r f; do
+      head -c 4 "$f" | grep -q "ELF" || continue
+      old=$(patchelf --print-rpath "$f" 2>/dev/null) || continue
+      new=$(printf '%s' "$old" | tr ':' '\n' | { grep -v "^$NIX_BUILD_TOP/" || true; } | paste -sd: -)
+      if [ "$new" != "$old" ]; then
+        echo "dropping build-tree RPATH entries from $f"
+        patchelf --set-rpath "$new" "$f"
+      fi
+    done
+  '';
   postInstall = ''
     install -Dm444 etc/ossec-server.conf "$out/share/wazuh-server/ossec-server.conf"
     # Keep the patched helper available to the executable package check.
