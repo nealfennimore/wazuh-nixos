@@ -37,7 +37,7 @@ agent.overrideAttrs (old: {
     # build sees the modes a git checkout has. The copy uses "$src"/*, which
     # skips dotfiles such as .gitignore and .github, so only chmod what the
     # copy produced.
-    (cd "$src" && find . -type f -perm -u+x -print0) | while IFS= read -r -d '' f; do
+    (cd "$src" && find . -type f -perm -u+x -print0) | while IFS= read -r -d "" f; do
       if [ -e "$f" ]; then chmod u+x "$f"; fi
     done
     test -x src/analysisd/compiled_rules/register_rule.sh
