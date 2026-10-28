@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 SOURCE = Path(sys.argv.pop(1)).resolve()
 HERE = Path(__file__).resolve().parent
@@ -57,7 +57,7 @@ class SourceBoundaries(unittest.TestCase):
                 target.write_text(original)
 
     def test_unprivileged_install_preparation(self):
-        names = ['install.sh', 'src/init/inst-functions.sh', 'src/Makefile', 'framework/Makefile', 'api/Makefile']
+        names = ['install.sh', 'src/init/inst-functions.sh', 'src/Makefile', 'framework/Makefile', 'api/Makefile', 'tools/mitre/mitredb.py']
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for name in names:
@@ -81,6 +81,26 @@ class SourceBoundaries(unittest.TestCase):
             self.assertIn('--disable-new-dtags ${CPYTHON_NIX_LDFLAGS}" CPPFLAGS="', makefile)
             self.assertIn('wpython INSTALLDIR=${INSTALLDIR} TARGET=${INSTYPE} || exit 1\n',
                           (root / 'src/init/inst-functions.sh').read_text())
+            # Run the patched entry point with runtime identity operations forbidden.
+            tree = ast.parse((root / 'tools/mitre/mitredb.py').read_text())
+            main = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == 'main')
+            database = root / 'mitre.db'
+            def populate(pathfile, session, destination):
+                Path(destination).write_bytes(b'MITRE test data')
+            parse_json = Mock(side_effect=populate)
+            namespace = {'os': os, 'find': Mock(return_value='enterprise-attack.json'),
+                         'create_engine': Mock(), 'sessionmaker': Mock(),
+                         'Base': Mock(), 'parse_json': parse_json,
+                         'pwd': Mock(), 'grp': Mock()}
+            namespace['pwd'].getpwnam.side_effect = AssertionError('build user lookup')
+            namespace['grp'].getgrnam.side_effect = KeyError('wazuh')
+            exec(compile(ast.Module(body=[main], type_ignores=[]), 'mitredb.py', 'exec'), namespace)
+            with patch.object(os, 'chown', side_effect=AssertionError('build chown')):
+                namespace['main'](str(database))
+            parse_json.assert_called_once()
+            self.assertEqual(database.read_bytes(), b'MITRE test data')
+            self.assertEqual(database.stat().st_mode & 0o777, 0o660)
             for name in ['install.sh', 'src/init/inst-functions.sh']:
                 result = subprocess.run(['bash', '-n', str(root / name)], capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr.decode())

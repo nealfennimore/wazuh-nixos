@@ -42,3 +42,10 @@ for name in ['src/init/inst-functions.sh', 'src/Makefile', 'framework/Makefile',
 # install_framework/api run sequentially in the install phase.
 replace_once(Path('src/Makefile'), 'wpython: install_dependencies install_framework install_api install_mitre',
              '.NOTPARALLEL: wpython\nwpython: install_dependencies install_framework install_api install_mitre')
+# The build sandbox has no runtime wazuh group and cannot chown to root.
+# Keep database generation and its mode; activation owns runtime identity.
+replace_once(Path('tools/mitre/mitredb.py'),
+             '    uid = pwd.getpwnam("root").pw_uid\n'
+             '    gid = grp.getgrnam("wazuh").gr_gid\n'
+             '    os.chown(database, uid, gid)\n',
+             '    # Ownership assigned at activation.\n')

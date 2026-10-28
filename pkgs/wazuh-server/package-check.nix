@@ -9,6 +9,7 @@ pkgs.runCommand "wazuh-server-package-check" {
   done
   test -s "$package/share/wazuh-server/test-support/chroot-source-check"
   test -f "$package/api/scripts/wazuh_apid.py"
+  test -s "$package/var/db/mitre.db"
   test -s "$package/ruleset/rules/0010-rules_config.xml"
   test -s "$package/share/wazuh-server/ossec-server.conf"
 
