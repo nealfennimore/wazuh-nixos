@@ -370,8 +370,17 @@ let
     };
     # remoted writes etc/shared/<group>/merged.mg, the configuration it
     # pushes to agents, and reads etc/client.keys that authd writes.
+    #
+    # Its main process forks one child per connection handler and then
+    # returns 0 (src/remoted/main.c, the loop over logr.conn), with or
+    # without -f. Under Type=exec that return is a clean exit and the unit
+    # goes inactive with the child still listening, until systemd stops the
+    # group. Type=forking waits for the parent to exit and tracks the one
+    # surviving child. The generated configuration has a single <remote>
+    # block, so there is exactly one child to find.
     wazuh-remoted = {
       chroot = true;
+      forking = true;
       after = [
         "wazuh-db.service"
         "wazuh-analysisd.service"
@@ -497,7 +506,7 @@ let
         // optionalAttrs chroot chrootHardening
         // optionalAttrs (name == "wazuh-syscheckd") { IPAddressDeny = "any"; }
         // {
-          Type = "exec";
+          Type = if unit.forking or false then "forking" else "exec";
           User = wazuhUser;
           Group = wazuhGroup;
           WorkingDirectory = "${stateDir}/";
