@@ -284,9 +284,13 @@ let
 
     # glibc reads /etc/localtime once, relative to the root of the process.
     # Inside the chroot that is this file, which is why the upstream
-    # installer copies it (inst-functions.sh, InstallCommon).
+    # installer copies it (inst-functions.sh, InstallCommon). NixOS creates
+    # /etc/localtime only when time.timeZone is set; without it the daemons
+    # would log in UTC anyway, so UTC is what the copy falls back to.
     if [ -e /etc/localtime ]; then
       install -m 0640 -o root -g ${wazuhGroup} "$(readlink -f /etc/localtime)" ${stateDir}/etc/localtime
+    else
+      install -m 0640 -o root -g ${wazuhGroup} ${pkgs.tzdata}/share/zoneinfo/UTC ${stateDir}/etc/localtime
     fi
 
     # api: scripts from the store, configuration as host state. The API
