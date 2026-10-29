@@ -357,11 +357,16 @@ let
       after = [ ];
     };
     # analysisd compiles each CDB list beside its source in etc/lists on
-    # start (Lists_OP_MakeCDB), so that one subtree is writable for it.
+    # start (lists_make.c), and writes the active-response map
+    # etc/shared/ar.conf that it pushes to agents (active-response.c:46,
+    # DEFAULTAR). Both subtrees are writable for it; the rest of etc is not.
     wazuh-analysisd = {
       chroot = true;
       after = [ "wazuh-db.service" ];
-      writable = [ "etc/lists" ];
+      writable = [
+        "etc/lists"
+        "etc/shared"
+      ];
     };
     # remoted writes etc/shared/<group>/merged.mg, the configuration it
     # pushes to agents, and reads etc/client.keys that authd writes.
