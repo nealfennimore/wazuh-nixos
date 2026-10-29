@@ -35,6 +35,17 @@
           # services.wazuh-agent.package overridable.
           services.wazuh-agent.package = lib.mkDefault (pkgs.callPackage ./pkgs/wazuh-agent.nix { });
         };
+      # The server module, with its package supplied the same way.
+      wazuhServerModule =
+        {
+          lib,
+          pkgs,
+          ...
+        }:
+        {
+          imports = [ ./nixos/wazuh-server ];
+          services.wazuh-server.package = lib.mkDefault (pkgs.callPackage ./pkgs/wazuh-server { });
+        };
       # The throwaway test VM. examples/vm.nix imports qemu-vm.nix itself, so
       # this list evaluates both as a plain NixOS system and as a VM.
       vmModules = [
@@ -49,6 +60,7 @@
 
       nixosModules.wazuh-agent = wazuhModule;
       nixosModules.default = wazuhModule;
+      nixosModules.wazuh-server = wazuhServerModule;
       nixosModules.wazuh-indexer = import ./nixos/wazuh-indexer;
       nixosModules.wazuh-dashboard = import ./nixos/wazuh-dashboard;
 
@@ -114,6 +126,10 @@
 
         packages.wazuh-server = pkgs.callPackage ./pkgs/wazuh-server { };
         checks.server-package = import ./pkgs/wazuh-server/package-check.nix { inherit pkgs; };
+        # The server module in one VM: daemons up under the sandbox, the
+        # four upstream chroots in place, ports open, ruleset loaded, API
+        # answering with auth. It builds the server package first.
+        checks.server = import ./nixos/tests/server { inherit pkgs wazuhServerModule; };
         packages.wazuh-indexer = pkgs.callPackage ./pkgs/wazuh-indexer { };
         checks.indexer = import ./nixos/tests/indexer { inherit pkgs; };
         packages.wazuh-dashboard = pkgs.callPackage ./pkgs/wazuh-dashboard { };

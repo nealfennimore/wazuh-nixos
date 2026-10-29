@@ -11,6 +11,8 @@ It supports `x86_64-linux` and `aarch64-linux`.
 |--------|---------|
 | `packages.wazuh-agent` | The agent build. `wazuh-control` is the main program. |
 | `nixosModules.wazuh-agent` | The `services.wazuh-agent` NixOS module. |
+| `packages.wazuh-server` | The server build: manager daemons, API and bundled CPython. |
+| `nixosModules.wazuh-server` | The `services.wazuh-server` NixOS module. See [Run the server](#run-the-server). |
 | `overlays.default` | Adds `wazuh-agent` to a package set. |
 | `devShells.default` | A shell for work on this repository. |
 
@@ -488,6 +490,47 @@ services.wazuh-agent.syscheck.directories = [
 Do not add `/nix/store`. It is immutable and large enough to make a checksum
 scan expensive for no gain. Add `/run/current-system/sw/bin` only if you want
 every system rebuild reported as several hundred changes.
+
+## Run the server
+
+`nixosModules.wazuh-server` runs the manager daemons and the API on one host.
+It owns `/var/ossec` and the `wazuh` account, so it cannot share a host with
+`services.wazuh-agent`. The manager monitors itself.
+
+```nix
+{
+  imports = [ inputs.wazuh-agent.nixosModules.wazuh-server ];
+  services.wazuh-server = {
+    enable = true;
+    openFirewall = true;
+    auth.passwordFile = "/run/secrets/wazuh-authd-pass";
+    api.tls = {
+      certificate = "/run/secrets/wazuh-api.crt";
+      key = "/run/secrets/wazuh-api.key";
+    };
+  };
+}
+```
+
+The module writes `ossec.conf` and `api.yaml` from its options. `extraConfig`
+appends XML inside `<ossec_config>`. Without `api.tls`, the API generates a
+self-signed pair on first start. Without `auth.tls`, the enrollment service
+generates one self-signed pair and keeps it. The API starts with the upstream
+default users (`wazuh`, `wazuh-wui`). Change their passwords through the API.
+
+Four daemons chroot into `/var/ossec` as upstream does: analysisd, remoted,
+monitord and wazuh-db. Their units carry `CAP_SYS_CHROOT` and nothing else.
+The other units carry no capability. Each daemon runs as `wazuh` with
+`ProtectSystem=strict` and a writable bind on its state directories only.
+
+```sh
+nix build .#checks.x86_64-linux.server
+```
+
+The check boots one VM, waits for every unit, confirms the four chroots and
+the ports, loads the ruleset with `wazuh-analysisd -t`, and authenticates
+against the API with the test PKI. Filebeat, the indexer credentials, active
+response on the manager and the cluster are not part of the module yet.
 
 ## Test in a QEMU VM
 
