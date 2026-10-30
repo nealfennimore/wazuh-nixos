@@ -230,9 +230,11 @@ pkgs.testers.runNixOSTest {
     with subtest("an event that matches a rule reaches alerts.json"):
         # The journald reader rebuilds a syslog line from SYSLOG_IDENTIFIER,
         # the PID and MESSAGE (logcollector/journal_log.c, entry_as_syslog),
-        # so an identifier of sshd reaches the sshd decoder. "Failed password"
-        # matches rule 5716 and then 5760, both level 5, above the alert
-        # level of 3.
+        # so an identifier of sshd reaches the sshd decoder. The child
+        # decoder ssh-failed (ruleset/decoders/0310-ssh_decoders.xml) takes
+        # the line, so the alert names it with sshd as the parent. "Failed
+        # password" matches rule 5716 and then 5760, both level 5, above
+        # the alert level of 3.
         token = "wazuh-server-enrollment-alert-probe"
         agent.succeed(
             "systemd-cat --identifier=sshd"
@@ -244,7 +246,9 @@ pkgs.testers.runNixOSTest {
             )
             server.succeed(
                 f"grep -F '{token}' /var/ossec/logs/alerts/alerts.json"
-                " | jq -e '.agent.name == \"example-agent\" and .decoder.name == \"sshd\" and (.rule.level | tonumber) >= 3'"
+                " | jq -e '.agent.name == \"example-agent\""
+                " and (.decoder.parent // .decoder.name) == \"sshd\""
+                " and (.rule.level | tonumber) >= 3'"
             )
         except Exception:
             server_state()
