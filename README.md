@@ -651,6 +651,45 @@ waits for filebeat to connect, writes an sshd line into a monitored file on
 the server, and finds the resulting alert (rule 5710) in `wazuh-alerts-4.x-*`
 with `curl` against the indexer.
 
+### Run the full stack check
+
+```sh
+nix build .#checks.x86_64-linux.stack
+```
+
+The check boots four VMs: `agent`, `server`, `indexer` and `dashboard`. It
+needs about 9 GB of memory for the VMs. The indexer VM runs the fixture
+from `nixos/tests/indexer/fixture.nix`. The server VM runs
+`services.wazuh-server` with `auth.tls`, `api.tls`, `api.users` and
+`indexer` set, all from the test PKI. The agent VM runs `services.wazuh-agent`
+with the same configuration as the enrollment check. The dashboard VM runs
+`services.wazuh-dashboard` with `indexer` pointed at the indexer VM and
+`managers` pointed at `https://server:55000` as the user `wazuh-wui`.
+
+The VMs start in order: the indexer, then the server, then the agent and the
+dashboard together. The subtests run in this order:
+
+1. The indexer answers with the security configuration applied.
+2. The server daemons run, `remoted` and `authd` listen, and the keystore
+   holds the indexer credentials.
+3. The API listens, `wazuh-api-users.service` set the passwords, and the
+   API authenticates with the test PKI.
+4. The agent enrolls against `authd` and connects to `remoted`.
+5. A journal entry written on the agent appears in the server's
+   `archives.json`.
+6. An alert from the agent appears in `wazuh-alerts-4.x-*` on the indexer.
+7. The dashboard status API reports `green`.
+8. No `wazuh-*` unit failed on any VM, and the server `ossec.log` holds no
+   `CRITICAL` line.
+9. The dashboard holds the server in `wazuh.yml`, trusts only the test CA
+   for the manager connection, and `/api/check-stored-api` reaches the
+   server API.
+
+The last subtest is separate on purpose. The `managers` wiring against the
+native API has no check of its own yet. A failure there leaves every earlier
+result in the log. Every timeout is sized for a shared builder. The indexer
+takes about 400 s to security-ready there, and the API took 350 s to listen.
+
 ## Test in a QEMU VM
 
 The flake builds a throwaway VM with the agent enabled. The VM configuration

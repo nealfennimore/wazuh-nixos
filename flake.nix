@@ -146,6 +146,13 @@
         checks.indexer = import ./nixos/tests/indexer { inherit pkgs; };
         packages.wazuh-dashboard = pkgs.callPackage ./pkgs/wazuh-dashboard { };
         checks.dashboard = import ./nixos/tests/dashboard { inherit pkgs; };
+        # The full stack in four VMs: the agent enrolls against the native
+        # server, its alert reaches the indexer through filebeat, and the
+        # dashboard answers against the indexer and the server API. Needs
+        # about 9 GB for the four VMs.
+        checks.stack = import ./nixos/tests/stack {
+          inherit pkgs wazuhModule wazuhServerModule;
+        };
 
         # The wazuh_testing package on its own, so a broken build or a stale
         # source hash surfaces in seconds instead of at VM start:
