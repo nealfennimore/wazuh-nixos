@@ -1,10 +1,11 @@
 # The Wazuh server: manager daemons and the API, as systemd units.
 #
-# Scope of this revision (phase 2 of PLANS/WAZUH_SERVER_NIXOS.md): the
-# daemons start under the sandbox, remoted and authd listen, the API
-# answers an authenticated request, and api-users.nix sets the API user
-# passwords from files. Filebeat, the indexer credentials in the keystore,
-# and the cluster are later phases.
+# Scope of this revision (phases 2, 3 and 5 of PLANS/WAZUH_SERVER_NIXOS.md):
+# the daemons start under the sandbox, remoted and authd listen, the API
+# answers an authenticated request, api-users.nix sets the API user
+# passwords from files, and with an indexer configured the setup unit
+# writes the indexer credentials to the Wazuh keystore and filebeat.nix
+# ships alerts. The cluster is a later phase.
 #
 # Layout. The agent module links the package trees into /var/ossec and lets
 # every daemon read through the links. That does not work here: analysisd,
@@ -69,6 +70,8 @@ let
       "indexer-ca" = cfg.indexer.tls.ca;
       "indexer-cert" = cfg.indexer.tls.certificate;
       "indexer-key" = cfg.indexer.tls.key;
+      "indexer-username" = cfg.indexer.usernameFile;
+      "indexer-password" = cfg.indexer.passwordFile;
     };
 
   generatedConfig = import ./generate-server-config.nix { inherit cfg pkgs credentialPaths; };
@@ -362,6 +365,24 @@ let
       install -m 0640 -o ${wazuhUser} -g ${wazuhGroup} "$CREDENTIALS_DIRECTORY/indexer-ca" ${credentialPaths.indexerCa}
       install -m 0640 -o ${wazuhUser} -g ${wazuhGroup} "$CREDENTIALS_DIRECTORY/indexer-cert" ${credentialPaths.indexerCertificate}
       install -m 0600 -o ${wazuhUser} -g ${wazuhGroup} "$CREDENTIALS_DIRECTORY/indexer-key" ${credentialPaths.indexerKey}
+
+      # The indexer credentials for the manager itself. The indexer
+      # connector (src/shared_modules/indexer_connector) reads them from the
+      # Wazuh keystore, a RocksDB at queue/keystore relative to the home,
+      # and falls back to admin:admin with a warning when they are absent.
+      # The vulnerability scanner and the inventory harvester, both loaded
+      # by wazuh-modulesd, are its users. wazuh-keystore writes the store
+      # (src/shared_modules/keystore/src/main.cpp; -vp reads one line from
+      # a file) and the reader opens it read-write, so the result belongs
+      # to wazuh. The store is rebuilt on every activation: the configured
+      # files are the source of truth. keyStore.cpp decrypts a version 1
+      # store with etc/sslmanager.key, so this runs after that file exists.
+      rm -rf ${stateDir}/queue/keystore
+      install -d -m 0750 -o ${wazuhUser} -g ${wazuhGroup} ${stateDir}/queue/keystore
+      ${pkg}/bin/wazuh-keystore -f indexer -k username -vp "$CREDENTIALS_DIRECTORY/indexer-username"
+      ${pkg}/bin/wazuh-keystore -f indexer -k password -vp "$CREDENTIALS_DIRECTORY/indexer-password"
+      chown -R ${wazuhUser}:${wazuhGroup} ${stateDir}/queue/keystore
+      chmod -R o-rwx ${stateDir}/queue/keystore
     ''}
   '';
 
@@ -572,8 +593,14 @@ let
     };
 in
 {
-  # api.users and wazuh-api-users.service.
-  imports = [ ./api-users.nix ];
+  imports = [
+    # api.users and wazuh-api-users.service.
+    ./api-users.nix
+    # Alert shipping. It reads services.wazuh-server.indexer and declares
+    # services.wazuh-server.filebeat; the arguments are the static values its
+    # unit shares with the daemons.
+    (import ./filebeat.nix { inherit stateDir wazuhGroup hardening; })
+  ];
 
   options.services.wazuh-server = {
     enable = mkEnableOption "the Wazuh server (manager and API)";
@@ -721,14 +748,30 @@ in
                 description = "Its private key. Keep it outside the Nix store.";
               };
             };
+            usernameFile = mkOption {
+              type = types.path;
+              example = "/run/secrets/wazuh-indexer-username";
+              description = ''
+                File with the indexer user name, one line. Read by PID 1
+                through LoadCredential, so it can be root-owned. The setup
+                unit writes it to the Wazuh keystore for the manager, and
+                filebeat authenticates with it.
+              '';
+            };
+            passwordFile = mkOption {
+              type = types.path;
+              example = "/run/secrets/wazuh-indexer-password";
+              description = "File with that user's password, one line. Same handling as usernameFile.";
+            };
           };
         }
       );
       default = null;
       description = ''
-        The indexer connection written to ossec.conf. null disables the
-        indexer block and vulnerability detection. Alert shipping through
-        filebeat and the indexer credentials are not part of this revision.
+        The indexer connection. It drives the ossec.conf <indexer> block,
+        the manager's keystore entries and the filebeat output
+        (services.wazuh-server.filebeat). null disables the indexer block,
+        vulnerability detection and filebeat.
       '';
     };
 
