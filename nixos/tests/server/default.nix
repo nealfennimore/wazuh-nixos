@@ -5,8 +5,9 @@
 # Scope: the module evaluates, activation builds /var/ossec, every daemon
 # starts under the sandbox and stays up, the four that chroot really are
 # chrooted, remoted and authd listen, the ruleset loads (wazuh-analysisd -t),
-# and the API answers an authenticated request over TLS with the test PKI
-# and refuses a wrong password and a wrong CA.
+# wazuh-api-users.service sets the API passwords from root-only files, and
+# the API answers an authenticated request over TLS with the test PKI and
+# refuses the upstream default password, a wrong password and a wrong CA.
 #
 # It does not enroll an agent, ship an alert to an indexer, or run a
 # response. Those are checks.server-enrollment, checks.server-indexer and
@@ -28,8 +29,15 @@ let
     "wazuh-syscheckd"
     "wazuh-logcollector"
     "wazuh-modulesd"
+    "wazuh-execd"
     "wazuh-apid"
   ];
+  # Policy-compliant replacements for the upstream defaults wazuh:wazuh and
+  # wazuh-wui:wazuh-wui. Test values; they live in the store.
+  apiPasswords = {
+    wazuh = "Wazuh-Api-Test1";
+    wazuh-wui = "Wui-Api-Test2";
+  };
 in
 pkgs.testers.runNixOSTest {
   name = "wazuh-server";
@@ -51,13 +59,20 @@ pkgs.testers.runNixOSTest {
           certificate = pki.server.cert;
           key = pki.server.key;
         };
+        api.users = {
+          wazuh.passwordFile = "/run/secrets/wazuh-api-wazuh";
+          wazuh-wui.passwordFile = "/run/secrets/wazuh-api-wui";
+        };
         auth.passwordFile = "/run/secrets/wazuh-authd-pass";
       };
 
       # Root-only, like the files secret managers create. The setup unit
-      # must read it through LoadCredential, not directly.
+      # and the api-users unit must read them through LoadCredential, not
+      # directly.
       systemd.tmpfiles.rules = [
         "f /run/secrets/wazuh-authd-pass 0400 root root - test-enrollment-password"
+        "f /run/secrets/wazuh-api-wazuh 0400 root root - ${apiPasswords.wazuh}"
+        "f /run/secrets/wazuh-api-wui 0400 root root - ${apiPasswords.wazuh-wui}"
       ];
 
       environment.systemPackages = [
@@ -85,6 +100,16 @@ pkgs.testers.runNixOSTest {
         server.succeed("grep -q '<port>1514</port>' /var/ossec/etc/ossec.conf")
         server.succeed("grep -q '<use_password>yes</use_password>' /var/ossec/etc/ossec.conf")
         server.succeed("grep -q '<enabled>no</enabled>' /var/ossec/etc/ossec.conf")
+        # Active response on by default: the upstream command definitions,
+        # no bound response, and the response programs linked under a
+        # sticky directory that execd can lock in.
+        server.succeed("grep -q '<name>firewall-drop</name>' /var/ossec/etc/ossec.conf")
+        server.fail("grep -q '<name>restart-wazuh</name>' /var/ossec/etc/ossec.conf")
+        server.fail("grep -q '<disabled>yes</disabled>' /var/ossec/etc/ossec.conf")
+        server.succeed("test $(stat -c %U:%G:%a /var/ossec/active-response/bin) = root:wazuh:1770")
+        target = server.succeed("readlink /var/ossec/active-response/bin/firewall-drop").strip()
+        assert target.startswith("/nix/store/"), f"firewall-drop -> {target}"
+        server.succeed("test ! -e /var/ossec/active-response/bin/restart-wazuh")
         server.succeed("test $(stat -c %U:%G:%a /var/ossec/etc/ossec.conf) = root:wazuh:640")
         server.succeed("test $(stat -c %U:%G:%a /var/ossec/etc/authd.pass) = wazuh:wazuh:640")
         server.succeed("grep -q test-enrollment-password /var/ossec/etc/authd.pass")
@@ -120,20 +145,37 @@ pkgs.testers.runNixOSTest {
     with subtest("the ruleset loads"):
         server.succeed("WAZUH_HOME=/var/ossec /var/ossec/bin/wazuh-analysisd -t")
 
-    with subtest("the API authenticates with the test PKI"):
+    with subtest("the api-users unit set the passwords from root-only files"):
+        # The unit waits for the API itself, so this is the API start time
+        # plus the password changes. It fails fast if the unit fails.
+        server.wait_for_unit("wazuh-api-users.service")
+        server.succeed("test $(systemctl show -p Result --value wazuh-api-users.service) = success")
+        server.succeed("test $(systemctl show -p User --value wazuh-api-users.service) = wazuh")
+        server.succeed("journalctl -u wazuh-api-users.service | grep -q 'wazuh: password set'")
+        server.succeed("journalctl -u wazuh-api-users.service | grep -q 'wazuh-wui: password set'")
+
+    with subtest("the API authenticates with the test PKI and the new passwords"):
         base = "curl --fail --silent --show-error --cacert ${pki.ca}"
-        token = server.wait_until_succeeds(
-            base + " -u wazuh:wazuh -X POST 'https://server:55000/security/user/authenticate?raw=true'",
-            timeout=300,
-        ).strip()
+        auth = "-X POST 'https://server:55000/security/user/authenticate?raw=true'"
+        token = server.succeed(base + " -u wazuh:${apiPasswords.wazuh} " + auth).strip()
         assert len(token) > 20, f"token: {token!r}"
         server.succeed(
             base + f" -H 'Authorization: Bearer {token}' https://server:55000/manager/info"
             + " | jq -e '.error == 0 and (.data.affected_items[0].version | startswith(\"v4.14\"))'"
         )
-        server.fail(base + " -u wazuh:wrong -X POST 'https://server:55000/security/user/authenticate?raw=true'")
-        server.fail("curl --fail --silent --cacert ${pki.wrongCa} -u wazuh:wazuh -X POST 'https://server:55000/security/user/authenticate?raw=true'")
+        server.succeed(base + " -u wazuh-wui:${apiPasswords.wazuh-wui} " + auth)
+        # The upstream defaults are gone.
+        server.fail(base + " -u wazuh:wazuh " + auth)
+        server.fail(base + " -u wazuh-wui:wazuh-wui " + auth)
+        server.fail(base + " -u wazuh:wrong " + auth)
+        server.fail("curl --fail --silent --cacert ${pki.wrongCa} -u wazuh:${apiPasswords.wazuh} " + auth)
         server.fail(base + " https://server:55000/manager/info")
+
+    with subtest("a second run of the api-users unit changes nothing and succeeds"):
+        server.succeed("systemctl restart wazuh-api-users.service")
+        server.succeed("test $(systemctl show -p Result --value wazuh-api-users.service) = success")
+        server.succeed("journalctl -u wazuh-api-users.service | grep -q 'wazuh: the password is current'")
+        server.succeed(base + " -u wazuh:${apiPasswords.wazuh} " + auth)
 
     with subtest("nothing died"):
         server.succeed("test -z \"$(systemctl list-units --state=failed --no-legend 'wazuh-*')\"")
