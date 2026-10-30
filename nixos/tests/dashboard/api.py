@@ -2,6 +2,7 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import base64
 import json
+import socket
 import ssl
 import sys
 from urllib.parse import urlsplit
@@ -36,7 +37,16 @@ class API(BaseHTTPRequestHandler):
             return
         self.reply(data)
 
-server = HTTPServer(("0.0.0.0", 55000), API)
+class DualStackServer(HTTPServer):
+    # The test network resolves node names to IPv6 first. The real API binds
+    # 0.0.0.0 and :: by default, so this fixture accepts both families too.
+    address_family = socket.AF_INET6
+
+    def server_bind(self):
+        self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
+
+server = DualStackServer(("::", 55000), API)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain(sys.argv[1], sys.argv[2])
 server.socket = context.wrap_socket(server.socket, server_side=True)
