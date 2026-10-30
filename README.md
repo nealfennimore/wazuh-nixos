@@ -109,6 +109,10 @@ sudo systemctl restart wazuh.target
 
 ## Options
 
+The tables in this README and in the indexer and dashboard READMEs list
+every option of the four modules. `checks.options-documented` evaluates the
+modules and fails when an option is missing from its table.
+
 | Option | Default | Purpose |
 |--------|---------|---------|
 | `enable` | `false` | Runs the agent daemons. |
@@ -133,6 +137,8 @@ sudo systemctl restart wazuh.target
 | `buffer.queueSize` | `5000` | How many events the queue holds. The range is 1 to 100000. |
 | `buffer.eventsPerSecond` | `500` | The send rate out of the queue. The range is 1 to 1000. |
 | `labels` | `{ }` | Labels that the manager adds to every alert from this host. |
+| `labels.<name>.value` | none | The label value. The plain string form of a label sets this. |
+| `labels.<name>.hidden` | `false` | Omit the label from alert output. The manager still receives it. |
 | `logging.plain` | `true` | Writes the agent's own log as text, to `logs/ossec.log`. |
 | `logging.json` | `false` | Writes the agent's own log as JSON, to `logs/ossec.json`. |
 | `packageInventory.enable` | `config.nix.enable` | Lists the Nix packages of the running system for vulnerability detection. |
@@ -141,8 +147,17 @@ sudo systemctl restart wazuh.target
 | `packageInventory.cpe.attrNames` | deep-closure list | Attribute paths in `pkgs` whose `meta.identifiers` feed the CPE map. |
 | `packageInventory.cpe.fallbacks` | hand-checked list | CPEs for pnames that nixpkgs has not annotated. Used only where nixpkgs says nothing. |
 | `packageInventory.cpe.overrides` | `{ }` | The host's final word on a pname's CPE vendor and product. |
+| `packageInventory.cpe.fallbacks.<name>.vendor` | none | The CPE vendor for that pname, lower case. |
+| `packageInventory.cpe.fallbacks.<name>.product` | the pname | The CPE product for that pname, lower case. |
+| `packageInventory.cpe.overrides.<name>.vendor` | none | The CPE vendor the host asserts for that pname. |
+| `packageInventory.cpe.overrides.<name>.product` | the pname | The CPE product the host asserts for that pname. |
 | `activeResponse.enable` | `false` | Lets the agent act on a finding, not only report it. |
-| `activeResponse.capability.<name>.enable` | see below | Whether that response is provisioned. |
+| `activeResponse.capability.firewall-drop.enable` | `true` | Add the offending address to the iptables DROP list. Grants `CAP_NET_ADMIN`. |
+| `activeResponse.capability.route-null.enable` | `true` | Route the offending address to nowhere. Grants `CAP_NET_ADMIN`. |
+| `activeResponse.capability.wazuh-slack.enable` | `true` | Post a notification to a Slack webhook with `curl`. No capability. |
+| `activeResponse.capability.host-deny.enable` | `false` | Append the offending address to `/etc/hosts.deny`. Needs that file writable by `wazuh`. |
+| `activeResponse.capability.firewalld-drop.enable` | `services.firewalld.enable` | Add the offending address to the firewalld drop list through a polkit rule. |
+| `activeResponse.capability.disable-account.enable` | `false` | Lock the offending account with `passwd -l`. Runs `wazuh-execd` as root. |
 | `extraConfig` | `""` | XML appended to the generated `ossec.conf`. |
 | `config` | `null` | The complete `ossec.conf`. Replaces the generated file. |
 | `path` | see module | Packages on the PATH of the daemons. |
@@ -575,6 +590,54 @@ yet.
 `listenIPv6` (default `true`) binds remoted and authd to a dual-stack socket.
 An agent that names the manager by hostname can resolve an IPv6 address first.
 With the upstream IPv4-only binding that agent cannot connect.
+
+### Server options
+
+Every option lives under `services.wazuh-server`. Paths point outside the Nix
+store unless the row says otherwise. PID 1 reads each `*File` option through
+`LoadCredential`, so those files can be root-only.
+
+| Option | Default | Purpose |
+|--------|---------|---------|
+| `enable` | `false` | Runs the manager daemons and the API. |
+| `package` | `pkgs.wazuh-server` | The server package. |
+| `openFirewall` | `false` | Opens the agent, enrollment and API ports in the firewall. |
+| `remote.port` | `1514` | The TCP port that `remoted` listens on for agents. |
+| `listenIPv6` | `true` | Binds `remoted` and `authd` to a dual-stack socket. Off, both bind IPv4 only, as upstream does. |
+| `auth.enable` | `true` | Runs `wazuh-authd`, the enrollment service. |
+| `auth.port` | `1515` | The enrollment port. |
+| `auth.passwordFile` | `null` | File with the enrollment password. `null` disables password enrollment. |
+| `auth.tls` | `null` | The certificate `authd` presents. `null` generates a self-signed pair once, as the upstream installer does. |
+| `auth.tls.certificate` | none | The certificate file. |
+| `auth.tls.key` | none | Its private key. |
+| `auth.agentCa` | `null` | CA that enrolling agents must present a certificate from. `null` accepts any agent. |
+| `api.port` | `55000` | The API port (HTTPS). |
+| `api.listenAddresses` | `[ "0.0.0.0" "::" ]` | Addresses the API binds. |
+| `api.tls` | `null` | The API certificate. `null` makes the API generate a self-signed pair on first start. |
+| `api.tls.certificate` | none | The certificate file. |
+| `api.tls.key` | none | Its private key. |
+| `api.serverName` | the host name, or `127.0.0.1` without `api.tls` | The name `wazuh-api-users.service` connects to. With `api.tls` it must appear in the certificate. |
+| `api.logLevel` | `"info"` | The API log level: `debug2`, `debug`, `info`, `warning`, `error` or `critical`. |
+| `api.settings` | `{ }` | Extra `api.yaml` settings, merged over the generated ones. |
+| `api.users` | `{ }` | Passwords for the built-in users `wazuh` and `wazuh-wui`, set after the API starts. Without an entry the upstream default stays. |
+| `api.users.<name>.passwordFile` | none | File with the password this user must have. The API requires 8 to 64 characters with upper, lower, digit and symbol. |
+| `api.users.<name>.defaultPassword` | the user name | The password the user has before this module changes it. Used only when `passwordFile` does not authenticate. |
+| `activeResponse.enable` | `true` | Runs `wazuh-execd` as `wazuh` and writes the upstream default `<command>` definitions. No `<active-response>` block is written, so no response runs until `extraConfig` adds one. |
+| `indexer` | `null` | The indexer connection. It drives the `<indexer>` block, the keystore entries and the filebeat output. `null` disables all three and vulnerability detection. |
+| `indexer.hosts` | `[ ]` | Indexer URLs, for example `https://indexer:9200`. |
+| `indexer.tls.ca` | none | CA the indexer certificates chain to. |
+| `indexer.tls.certificate` | none | Client certificate for the indexer. |
+| `indexer.tls.key` | none | Its private key. |
+| `indexer.usernameFile` | none | File with the indexer user name, one line. Written to the Wazuh keystore. |
+| `indexer.passwordFile` | none | File with that user's password, one line. Written to the Wazuh keystore. |
+| `filebeat.enable` | `true` | Ships alerts to the indexer with filebeat. Takes effect only when `indexer` is set. |
+| `filebeat.package` | `pkgs/filebeat-oss` | The filebeat package. The default is filebeat OSS 7.10.2, the version upstream ships. |
+| `filebeat.archives` | `false` | Also ships `logs/archives/archives.json` into `wazuh-archives-4.x-*`. Needs `logAll`. |
+| `filebeat.settings` | `{ }` | Extra `filebeat.yml` settings, merged over the generated ones. Dotted keys are accepted. |
+| `logAll` | `false` | Archives every event, not only alerts, under `logs/archives`. |
+| `alertLevel` | `3` | The minimum rule level that produces an alert. |
+| `extraConfig` | `""` | XML appended inside `<ossec_config>`. |
+| `path` | `[ ]` | Packages added to the daemons' PATH, for command readers and integrations. |
 
 ### Enroll an agent against the server
 

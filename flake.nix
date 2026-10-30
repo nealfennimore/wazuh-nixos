@@ -101,6 +101,22 @@
         checks.component-rendering = import ./nixos/tests/dashboard/rendering.nix {
           inherit pkgs;
         };
+        # Every module option appears in its README. Evaluation only, no VM.
+        checks.options-documented = import ./nixos/tests/options-documented.nix {
+          inherit pkgs nixpkgs;
+          modules = {
+            wazuh-agent = wazuhModule;
+            wazuh-server = wazuhServerModule;
+            wazuh-indexer = import ./nixos/wazuh-indexer;
+            wazuh-dashboard = import ./nixos/wazuh-dashboard;
+          };
+          readmes = {
+            wazuh-agent = ./README.md;
+            wazuh-server = ./README.md;
+            wazuh-indexer = ./nixos/wazuh-indexer/README.md;
+            wazuh-dashboard = ./nixos/wazuh-dashboard/README.md;
+          };
+        };
 
         # Enrollment and delivery, against the Wazuh manager container image.
         # Kept separate from checks.agent on purpose: this one pulls a
