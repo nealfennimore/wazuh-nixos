@@ -13,8 +13,20 @@ let
     print(bcrypt.hashpw(b'Test-password-42!', bcrypt.gensalt()).decode())
     PY
   '';
+  # A second password, Rotated-password-43!, for rotation tests. Kept apart
+  # from secrets so that adding it changes no existing derivation.
+  rotated = pkgs.runCommand "wazuh-indexer-test-rotated-hash" {
+    nativeBuildInputs = [ (pkgs.python3.withPackages (p: [ p.bcrypt ])) ];
+  } ''
+    mkdir -p $out
+    printf '%s' 'Rotated-password-43!' > $out/password
+    python - <<'PY' > $out/hash
+    import bcrypt
+    print(bcrypt.hashpw(b'Rotated-password-43!', bcrypt.gensalt()).decode())
+    PY
+  '';
 in {
-  inherit secrets;
+  inherit secrets rotated;
   module = {
     imports = [ ../../wazuh-indexer ];
     virtualisation.memorySize = 3072;
