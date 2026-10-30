@@ -141,15 +141,15 @@ jobs:
     name: ${{ matrix.check }} (x86_64-linux)
     needs: [build, build-server]
     runs-on: ubuntu-latest
-    # A pull request does not push to the cache, so checks.server would
-    # rebuild the server from source there. It runs on pushes only.
-    if: ${{ matrix.check == 'agent' || github.event_name == 'push' }}
     strategy:
       fail-fast: false
       matrix:
         # One VM each. checks.server boots the manager and the API and
         # reads the server package from the cache that build-server filled.
-        check: [agent, server]
+        # Select before expansion: job-level if cannot reference matrix.
+        # Other events do not publish packages to the cache, so only pushes
+        # include the server test, which would otherwise rebuild the server.
+        check: ${{ fromJSON(github.event_name == 'push' && '["agent", "server"]' || '["agent"]') }}
     steps:
       - uses: actions/checkout@v4
 
