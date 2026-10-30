@@ -137,6 +137,15 @@
         checks.server-enrollment = import ./nixos/tests/server-enrollment {
           inherit pkgs wazuhModule wazuhServerModule;
         };
+        # Alert shipping: the server and an indexer in two VMs, the
+        # keystore written, filebeat connected, and an alert from the
+        # manager found in wazuh-alerts-4.x-*. Needs about 6 GB for the
+        # two VMs.
+        checks.server-indexer = import ./nixos/tests/server-indexer { inherit pkgs wazuhServerModule; };
+        # filebeat OSS 7.10.2, the shipper the upstream server package
+        # installs. nixpkgs filebeat7 is the licensed build and refuses the
+        # indexer (GET /_license on connect).
+        packages.filebeat-oss = pkgs.callPackage ./pkgs/filebeat-oss { };
         packages.wazuh-indexer = pkgs.callPackage ./pkgs/wazuh-indexer { };
         checks.indexer = import ./nixos/tests/indexer { inherit pkgs; };
         packages.wazuh-dashboard = pkgs.callPackage ./pkgs/wazuh-dashboard { };
