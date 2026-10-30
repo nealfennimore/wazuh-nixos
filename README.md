@@ -515,8 +515,47 @@ It owns `/var/ossec` and the `wazuh` account, so it cannot share a host with
 The module writes `ossec.conf` and `api.yaml` from its options. `extraConfig`
 appends XML inside `<ossec_config>`. Without `api.tls`, the API generates a
 self-signed pair on first start. Without `auth.tls`, the enrollment service
-generates one self-signed pair and keeps it. The API starts with the upstream
-default users (`wazuh`, `wazuh-wui`). Change their passwords through the API.
+generates one self-signed pair and keeps it.
+
+The API starts with the upstream default users `wazuh` and `wazuh-wui`, and
+the default password of each user is its name. `api.users.<name>.passwordFile`
+replaces that password with the content of a file.
+
+```nix
+services.wazuh-server.api.users = {
+  wazuh.passwordFile = "/run/secrets/wazuh-api-wazuh";
+  wazuh-wui.passwordFile = "/run/secrets/wazuh-api-wui";
+};
+```
+
+PID 1 reads the files through `LoadCredential`, so they can belong to root.
+The API requires 8 to 64 characters with an upper-case letter, a lower-case
+letter, a digit and a symbol. The unit `wazuh-api-users.service` runs after
+`wazuh-apid.service`. It waits for the API, then it tries each user's
+configured password. If the configured password authenticates, the unit
+changes nothing. Otherwise it authenticates with the upstream default and
+sets the new password through `PUT /security/users/{id}`. If neither
+password authenticates, the unit fails and names the user. Put the current
+password in the file, or reset the password through the API. Without
+`api.users`, the upstream defaults stay.
+
+With `api.tls` set, the unit verifies the API certificate and connects to
+`api.serverName`, which defaults to the host name. The host name must be a
+name in the certificate. Without `api.tls`, the unit connects to `127.0.0.1`
+with certificate verification off, because the self-signed pair that the API
+generates carries no usable name. The password then still travels encrypted,
+but the peer is not authenticated.
+
+`activeResponse.enable` defaults to `true`, as upstream. The module runs
+`wazuh-execd` as `wazuh` with no capability and writes the upstream default
+`<command>` definitions to `ossec.conf`, except `restart-wazuh`, whose program
+the package removes. No `<active-response>` block is written, so no response
+runs on the manager until `extraConfig` adds one. The stock response programs
+need more than the unit grants: `firewall-drop` and `route-null` need
+`CAP_NET_ADMIN`, `host-deny` writes `/etc/hosts.deny`, and `disable-account`
+needs root. Grant those to the unit before you bind such a response to the
+manager. `false` removes the unit and writes
+`<active-response><disabled>yes</disabled></active-response>`.
 
 Four daemons chroot into `/var/ossec` as upstream does: analysisd, remoted,
 monitord and wazuh-db. Their units carry `CAP_SYS_CHROOT` and nothing else.
@@ -528,9 +567,10 @@ nix build .#checks.x86_64-linux.server
 ```
 
 The check boots one VM, waits for every unit, confirms the four chroots and
-the ports, loads the ruleset with `wazuh-analysisd -t`, and authenticates
-against the API with the test PKI. Filebeat, the indexer credentials, active
-response on the manager and the cluster are not part of the module yet.
+the ports, loads the ruleset with `wazuh-analysisd -t`, confirms that
+`wazuh-api-users.service` replaced the default passwords, and authenticates
+against the API with the test PKI. Filebeat, the indexer credentials and the
+cluster are not part of the module yet.
 
 `listenIPv6` (default `true`) binds remoted and authd to a dual-stack socket.
 An agent that names the manager by hostname can resolve an IPv6 address first.

@@ -138,6 +138,84 @@ let
     </auth>
   '';
 
+  # Active response. WriteManager writes three templates here, in this
+  # order: etc/templates/config/generic/global-ar.template (a second
+  # <global> block with the white list), ar-commands.template (the
+  # <command> definitions) and ar-definitions.template (a commented-out
+  # <active-response> placeholder). The white list and the commands below
+  # are copied from those files at v4.14.8, with two deviations:
+  #
+  #   - The installer appends the host's resolv.conf name servers to the
+  #     white list. A NixOS host declares them elsewhere; add them through
+  #     extraConfig if a response must never hit them.
+  #   - The restart-wazuh command is left out. pkgs/wazuh-server deletes its
+  #     program, because systemd owns restarts here.
+  #
+  # win_route-null and netsh name Windows programs. They are definitions
+  # only, pushed to agents through etc/shared/ar.conf when a block binds
+  # them, so they stay as upstream has them.
+  #
+  # With active response off, analysisd gets <disabled>yes</disabled>
+  # (src/config/active-response.c:125-127 sets ar_flag = -1 and skips the
+  # block) and no commands, and execd does not run.
+  activeResponse =
+    if cfg.activeResponse.enable then
+      ''
+        <!-- Active response -->
+        <global>
+          <white_list>127.0.0.1</white_list>
+          <white_list>^localhost.localdomain$</white_list>
+        </global>
+
+        <command>
+          <name>disable-account</name>
+          <executable>disable-account</executable>
+          <timeout_allowed>yes</timeout_allowed>
+        </command>
+
+        <command>
+          <name>firewall-drop</name>
+          <executable>firewall-drop</executable>
+          <timeout_allowed>yes</timeout_allowed>
+        </command>
+
+        <command>
+          <name>host-deny</name>
+          <executable>host-deny</executable>
+          <timeout_allowed>yes</timeout_allowed>
+        </command>
+
+        <command>
+          <name>route-null</name>
+          <executable>route-null</executable>
+          <timeout_allowed>yes</timeout_allowed>
+        </command>
+
+        <command>
+          <name>win_route-null</name>
+          <executable>route-null.exe</executable>
+          <timeout_allowed>yes</timeout_allowed>
+        </command>
+
+        <command>
+          <name>netsh</name>
+          <executable>netsh.exe</executable>
+          <timeout_allowed>yes</timeout_allowed>
+        </command>
+
+        <!--
+        <active-response>
+          active-response options here
+        </active-response>
+        -->
+      ''
+    else
+      ''
+        <active-response>
+          <disabled>yes</disabled>
+        </active-response>
+      '';
+
   # The manager monitors its own logs. The commands in the upstream
   # localfile-commands template (df, netstat, last) are left out: they need
   # tools that a NixOS host does not put on the daemon PATH by default.
@@ -156,6 +234,7 @@ pkgs.writeText "ossec.conf" ''
   ${remote}
   ${vulnerabilityDetection}
   ${indexer}
+  ${activeResponse}
   ${localfile}
   ${ruleset}
   ${ruleTest}
