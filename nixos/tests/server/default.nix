@@ -177,6 +177,39 @@ pkgs.testers.runNixOSTest {
         server.succeed("journalctl -u wazuh-api-users.service | grep -q 'wazuh: the password is current'")
         server.succeed(base + " -u wazuh:${apiPasswords.wazuh} " + auth)
 
+    with subtest("a missing API credential fails closed and recovers when restored"):
+        server.succeed("mv /run/secrets/wazuh-api-wazuh /run/secrets/wazuh-api-wazuh.saved")
+        server.fail("systemctl restart wazuh-api-users.service")
+        server.succeed("systemctl is-failed wazuh-api-users.service")
+        # A failed credential load must not reset the API or its password.
+        server.succeed(base + " -u wazuh:${apiPasswords.wazuh} " + auth)
+        server.fail(base + " -u wazuh:wazuh " + auth)
+        server.succeed("mv /run/secrets/wazuh-api-wazuh.saved /run/secrets/wazuh-api-wazuh")
+        server.succeed("systemctl reset-failed wazuh-api-users.service")
+        server.succeed("systemctl restart wazuh-api-users.service")
+        server.succeed("test $(systemctl show -p Result --value wazuh-api-users.service) = success")
+
+    with subtest("credential drift is rejected without changing the API password"):
+        # With neither the desired password nor default matching the API,
+        # the unit must refuse to overwrite an operator's existing password.
+        drift_password = "Different-Api-Test3!"
+        server.succeed("cp -p /run/secrets/wazuh-api-wazuh /run/secrets/wazuh-api-wazuh.saved")
+        server.succeed(f"printf '%s' '{drift_password}' > /run/secrets/wazuh-api-wazuh")
+        server.fail("systemctl restart wazuh-api-users.service")
+        server.succeed("systemctl is-failed wazuh-api-users.service")
+        server.succeed("journalctl -u wazuh-api-users.service | grep -q 'neither the configured password nor the upstream default authenticates'")
+        server.succeed(base + " -u wazuh:${apiPasswords.wazuh} " + auth)
+        server.fail(base + f" -u wazuh:{drift_password} " + auth)
+        server.fail(base + " -u wazuh:wazuh " + auth)
+        # Neither the supplied secret nor the current one belongs in logs.
+        for password in [drift_password, "${apiPasswords.wazuh}", "${apiPasswords.wazuh-wui}"]:
+            server.fail(f"journalctl -u wazuh-api-users.service | grep -F -- '{password}'")
+        server.succeed("mv /run/secrets/wazuh-api-wazuh.saved /run/secrets/wazuh-api-wazuh")
+        server.succeed("systemctl reset-failed wazuh-api-users.service")
+        server.succeed("systemctl restart wazuh-api-users.service")
+        server.succeed("test $(systemctl show -p Result --value wazuh-api-users.service) = success")
+        server.succeed(base + " -u wazuh:${apiPasswords.wazuh} " + auth)
+
     with subtest("nothing died"):
         server.succeed("test -z \"$(systemctl list-units --state=failed --no-legend 'wazuh-*')\"")
         server.fail("grep CRITICAL /var/ossec/logs/ossec.log")
