@@ -52,6 +52,7 @@ in pkgs.testers.runNixOSTest {
     };
   };
   testScript = ''
+    import time
     start_all()
     indexer.wait_until_succeeds("systemctl is-active wazuh-indexer-security.service", timeout=900)
     server.wait_for_unit("test-api.service")
@@ -79,6 +80,22 @@ in pkgs.testers.runNixOSTest {
         indexer.succeed("systemctl restart wazuh-indexer-security.service")
         indexer.wait_until_succeeds(kibana.format("Rotated-password-43!"), timeout=120)
         indexer.fail(kibana.format("Test-password-42!"))
+
+        # Stale credential: the status API must answer with a state, and the
+        # state must stay off green for a full minute. A bare "not green"
+        # would also pass while the service is still starting.
+        status = "curl --silent --cacert ${pki.ca} -u 'admin:Test-password-42!' https://dashboard:5601/api/status"
+        dashboard.succeed("systemctl restart wazuh-dashboard")
+        dashboard.wait_for_open_port(5601)
+        dashboard.wait_until_succeeds(status + " | jq -e '.status.overall.state | type == \"string\"'", timeout=600)
+        stale_states = set()
+        for _ in range(12):
+            state = dashboard.succeed(status + " | jq -r '.status.overall.state'").strip()
+            stale_states.add(state)
+            assert state != "green", "dashboard reported green with a stale kibanaserver password"
+            time.sleep(5)
+        print(f"states with the stale password: {sorted(stale_states)}")
+
         dashboard.succeed("install -m400 ${fixture.rotated}/password /run/secrets/kibanaserver-password")
         dashboard.succeed("systemctl restart wazuh-dashboard")
         dashboard.succeed("jq -e '.\"opensearch.password\" == \"Rotated-password-43!\"' /run/wazuh-dashboard/opensearch_dashboards.yml")
