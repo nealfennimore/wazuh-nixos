@@ -910,10 +910,13 @@ host must reach that server.
 
 ## Use the binary cache
 
-GitHub Actions builds `wazuh-agent` for both systems on every push to `main`
-and pushes the result to Cachix. The workflow is `.github/workflows/build.yml`.
-It also runs `checks.agent` on `x86_64-linux`. It does not run the enrollment
-or integration checks.
+GitHub Actions builds `wazuh-agent` for both systems, and the server stack
+(`wazuh-server`, `wazuh-indexer`, `wazuh-dashboard`, `filebeat-oss`) for
+`x86_64-linux`, on every push to `main` and to `integration/server-stack`,
+and pushes the results to Cachix. The workflow is
+`.github/workflows/build.yml`. It also runs `checks.agent`, `checks.server`
+and the source-level checks on `x86_64-linux`. It does not run the
+enrollment, integration or multi-VM checks.
 
 To use the cache, add it to the host that builds the agent:
 
