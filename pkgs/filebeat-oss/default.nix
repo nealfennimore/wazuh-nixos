@@ -75,7 +75,7 @@ stdenv.mkDerivation {
     install -Dm755 usr/share/filebeat/bin/filebeat $out/bin/filebeat
     install -d $out/share/filebeat
     cp -R usr/share/filebeat/module $out/share/filebeat/
-    install -m444 usr/share/filebeat/fields.yml $out/share/filebeat/fields.yml
+    install -m444 etc/filebeat/fields.yml $out/share/filebeat/fields.yml
     runHook postInstall
   '';
 
