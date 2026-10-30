@@ -83,11 +83,13 @@ in pkgs.testers.runNixOSTest {
 
         # Stale credential. While it cannot authenticate, the dashboard never
         # becomes ready, and /api/status answers in plain text, not JSON.
-        # Positive proof: the indexer logs the failed kibanaserver login
-        # after this restart. Bounded negative: no 200 for a full minute.
-        since = indexer.succeed("date '+%Y-%m-%d %H:%M:%S'").strip()
+        # Positive proof: the indexer logs a failed kibanaserver login from
+        # the restarted process. Bounded negative: no 200 for a full minute.
         dashboard.succeed("systemctl restart wazuh-dashboard")
         dashboard.wait_for_open_port(5601)
+        # Mark the time only now: before the restart, the old process also
+        # held the stale password and its failures would match too.
+        since = indexer.succeed("date '+%Y-%m-%d %H:%M:%S'").strip()
         indexer.wait_until_succeeds(f"journalctl -u wazuh-indexer --since '{since}' | grep -q 'Authentication finally failed for kibanaserver'", timeout=300)
         code = "curl --silent --output /dev/null --write-out '%{http_code}' --cacert ${pki.ca} -u 'admin:Test-password-42!' https://dashboard:5601/api/status"
         stale_codes = set()
