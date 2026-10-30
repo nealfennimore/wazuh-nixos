@@ -1,6 +1,6 @@
 # The Wazuh server: manager daemons and the API, as systemd units.
 #
-# Scope of this revision (phases 2 and 5 of PLANS/WAZUH_SERVER_NIXOS.md):
+# Scope of this revision (phases 2, 3 and 5 of PLANS/WAZUH_SERVER_NIXOS.md):
 # the daemons start under the sandbox, remoted and authd listen, the API
 # answers an authenticated request, api-users.nix sets the API user
 # passwords from files, and with an indexer configured the setup unit
