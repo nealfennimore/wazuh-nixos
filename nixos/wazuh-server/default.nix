@@ -2,10 +2,10 @@
 #
 # Scope of this revision (phases 2 and 5 of PLANS/WAZUH_SERVER_NIXOS.md):
 # the daemons start under the sandbox, remoted and authd listen, the API
-# answers an authenticated request, and with an indexer configured the
-# setup unit writes the indexer credentials to the Wazuh keystore and
-# filebeat.nix ships alerts. Active response on the manager and the cluster
-# are later phases.
+# answers an authenticated request, api-users.nix sets the API user
+# passwords from files, and with an indexer configured the setup unit
+# writes the indexer credentials to the Wazuh keystore and filebeat.nix
+# ships alerts. The cluster is a later phase.
 #
 # Layout. The agent module links the package trees into /var/ossec and lets
 # every daemon read through the links. That does not work here: analysisd,
@@ -190,6 +190,26 @@ let
       ln -s ${pkg}/${dir} ${stateDir}/${dir}
     '') linkedPackageDirs}
 
+    # active-response/bin is a real sticky directory with one store link per
+    # response program, as in the agent module: the firewall responses
+    # create a lock directory beside themselves
+    # (src/active-response/firewalls/default-firewall-drop.c:12, LOCK_PATH
+    # active-response/bin/fw-drop), so execd needs the write, and the
+    # sticky bit keeps the wazuh group from replacing the root-owned links.
+    # The directory inode stays across activations because it is a mount
+    # point in the execd namespace. Only the entries are refreshed.
+    # restart-wazuh is absent from the package (pkgs/wazuh-server).
+    if [ -L ${stateDir}/active-response ]; then
+      rm ${stateDir}/active-response
+    fi
+    install -d -m 0750 -o root -g ${wazuhGroup} ${stateDir}/active-response
+    install -d -m 1770 -o root -g ${wazuhGroup} ${stateDir}/active-response/bin
+    find ${stateDir}/active-response/bin -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+    for entry in ${pkg}/active-response/bin/*; do
+      [ -e "$entry" ] || continue
+      ln -s "$entry" ${stateDir}/active-response/bin/"$(basename "$entry")"
+    done
+
     # A fresh copy beside the old one, then a rename, so a daemon that
     # starts during activation never sees a half-copied ruleset.
     ${concatMapStringsSep "\n" (dir: ''
@@ -367,9 +387,9 @@ let
   '';
 
   # The daemons, in the order src/init/wazuh-server.sh starts them, minus
-  # the ones this revision does not run: execd (no active response on the
-  # manager yet), maild, clusterd, agentlessd, integratord and csyslogd (all
-  # optional upstream).
+  # the ones this revision does not run: maild, clusterd, agentlessd,
+  # integratord and csyslogd (all optional upstream). execd is conditional
+  # on activeResponse.enable, below.
   #
   # chroot: the daemon calls chroot(home) after reading its configuration.
   # writable: state outside the four shared trees that this daemon writes.
@@ -432,6 +452,35 @@ let
     wazuh-authd = {
       after = [ "wazuh-db.service" ];
       writable = [ "etc" ];
+    };
+  }
+  // optionalAttrs cfg.activeResponse.enable {
+    # execd runs the responses that an <active-response> block binds to the
+    # manager itself (location server). It does not chroot, and its only
+    # privilege call is Privsep_SetGroup (src/os_execd/main.c:115-123),
+    # which the privsep patch makes a no-op. It binds queue/alerts/execq
+    # (main.c:169) and queue/sockets/com (wcom.c:469), writes var/run, and
+    # reads etc/shared/ar.conf (exec.c:42) that analysisd writes. So the
+    # wazuh user with no capability is enough for the daemon.
+    #
+    # The response programs are another matter. Upstream runs execd as
+    # root because firewall-drop and route-null need CAP_NET_ADMIN,
+    # host-deny writes /etc/hosts.deny and disable-account needs a real
+    # uid of 0 (the agent module's responseRequirements table has the
+    # source lines). The upstream manager configuration binds none of them:
+    # it defines the <command> blocks and leaves <active-response>
+    # commented out (etc/templates/config/generic/ar-definitions.template),
+    # so by default no program runs on the manager, and nothing here
+    # grants what a program needs. An operator who adds a server-side
+    # response through extraConfig must also grant its needs to this unit.
+    #
+    # With active response disabled, execd logs "Active response disabled"
+    # and returns 0 (execd.c:574-577), so the unit is absent rather than
+    # inactive forever, and the generated ossec.conf tells analysisd the
+    # same through <active-response><disabled>yes</disabled>.
+    wazuh-execd = {
+      after = [ "wazuh-db.service" ];
+      writable = [ "active-response" ];
     };
   };
 
@@ -544,10 +593,12 @@ let
     };
 in
 {
-  # Alert shipping. It reads services.wazuh-server.indexer and declares
-  # services.wazuh-server.filebeat; the arguments are the static values its
-  # unit shares with the daemons.
   imports = [
+    # api.users and wazuh-api-users.service.
+    ./api-users.nix
+    # Alert shipping. It reads services.wazuh-server.indexer and declares
+    # services.wazuh-server.filebeat; the arguments are the static values
+    # its unit shares with the daemons.
     (import ./filebeat.nix { inherit stateDir wazuhGroup hardening; })
   ];
 
@@ -562,6 +613,18 @@ in
       type = types.port;
       default = 1514;
       description = "Port remoted listens on for agent connections (TCP).";
+    };
+
+    listenIPv6 = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Bind remoted and authd to an IPv6 socket. On Linux that socket is
+        dual-stack unless net.ipv6.bindv6only is set, so IPv4 agents keep
+        connecting. Off, both daemons bind IPv4 only (the upstream
+        default), and an agent that resolves the manager name to an IPv6
+        address cannot connect.
+      '';
     };
 
     auth = {
@@ -709,6 +772,20 @@ in
         the manager's keystore entries and the filebeat output
         (services.wazuh-server.filebeat). null disables the indexer block,
         vulnerability detection and filebeat.
+      '';
+    };
+
+    activeResponse.enable = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Run wazuh-execd on the manager and write the upstream default
+        <command> definitions to ossec.conf, as the upstream manager does.
+        No <active-response> block is written, so no response runs until
+        extraConfig adds one. The unit runs as wazuh with no capability;
+        see the daemon table in the module for what the stock response
+        programs need beyond that. false removes the unit and writes
+        <active-response><disabled>yes</disabled>.
       '';
     };
 
