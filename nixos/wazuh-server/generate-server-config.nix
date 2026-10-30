@@ -49,6 +49,7 @@ let
       <connection>secure</connection>
       <port>${toString cfg.remote.port}</port>
       <protocol>tcp</protocol>
+      <ipv6>${yesNo cfg.listenIPv6}</ipv6>
       <queue_size>131072</queue_size>
     </remote>
   '';
@@ -124,6 +125,7 @@ let
     <auth>
       <disabled>${yesNo (!cfg.auth.enable)}</disabled>
       <port>${toString cfg.auth.port}</port>
+      <ipv6>${yesNo cfg.listenIPv6}</ipv6>
       <use_source_ip>no</use_source_ip>
       <purge>yes</purge>
       <use_password>${yesNo (cfg.auth.passwordFile != null)}</use_password>

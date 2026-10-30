@@ -535,6 +535,18 @@ in
       description = "Port remoted listens on for agent connections (TCP).";
     };
 
+    listenIPv6 = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Bind remoted and authd to an IPv6 socket. On Linux that socket is
+        dual-stack unless net.ipv6.bindv6only is set, so IPv4 agents keep
+        connecting. Off, both daemons bind IPv4 only (the upstream
+        default), and an agent that resolves the manager name to an IPv6
+        address cannot connect.
+      '';
+    };
+
     auth = {
       enable = mkOption {
         type = types.bool;

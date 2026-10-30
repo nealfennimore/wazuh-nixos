@@ -130,6 +130,13 @@
         # four upstream chroots in place, ports open, ruleset loaded, API
         # answering with auth. It builds the server package first.
         checks.server = import ./nixos/tests/server { inherit pkgs wazuhServerModule; };
+        # The agent module against the server module, in two VMs: the agent
+        # verifies authd with the test CA and enrolls, connects to remoted,
+        # and an event written on the agent reaches the server's archive
+        # and alert logs.
+        checks.server-enrollment = import ./nixos/tests/server-enrollment {
+          inherit pkgs wazuhModule wazuhServerModule;
+        };
         packages.wazuh-indexer = pkgs.callPackage ./pkgs/wazuh-indexer { };
         checks.indexer = import ./nixos/tests/indexer { inherit pkgs; };
         packages.wazuh-dashboard = pkgs.callPackage ./pkgs/wazuh-dashboard { };

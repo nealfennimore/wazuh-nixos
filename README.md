@@ -532,6 +532,34 @@ the ports, loads the ruleset with `wazuh-analysisd -t`, and authenticates
 against the API with the test PKI. Filebeat, the indexer credentials, active
 response on the manager and the cluster are not part of the module yet.
 
+`listenIPv6` (default `true`) binds remoted and authd to a dual-stack socket.
+An agent that names the manager by hostname can resolve an IPv6 address first.
+With the upstream IPv4-only binding that agent cannot connect.
+
+### Enroll an agent against the server
+
+```sh
+nix build .#checks.x86_64-linux.server-enrollment
+```
+
+The check boots two VMs. One runs `services.wazuh-server` with `auth.tls` from
+the test PKI and `logAll = true`. The other runs `services.wazuh-agent` with
+`manager.host = "server"`, the same enrollment password file, and
+`registration.caFile` set to the test CA. It confirms five things:
+
+1. The agent verifies the server certificate and enrolls against `authd`.
+2. The server records the agent, under `registration.agentName`, in its own
+   `/var/ossec/etc/client.keys`.
+3. `wazuh-agentd` logs `(4102): Connected to the server` and reports
+   `status='connected'`.
+4. A journal entry written on the agent appears in the server's
+   `logs/archives/archives.json`.
+5. A journal entry that matches an `sshd` rule appears in
+   `logs/alerts/alerts.json`.
+
+The check also confirms that no `wazuh-*` unit failed on either VM and that
+the server `ossec.log` holds no `CRITICAL` line. It needs no container image.
+
 ## Test in a QEMU VM
 
 The flake builds a throwaway VM with the agent enabled. The VM configuration
