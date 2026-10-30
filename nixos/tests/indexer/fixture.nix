@@ -18,6 +18,8 @@ in {
   module = {
     imports = [ ../../wazuh-indexer ];
     virtualisation.memorySize = 3072;
+    # One vCPU took 176 s to start the JVM on a shared builder.
+    virtualisation.cores = 2;
     services.wazuh-indexer = {
       enable = true;
       listenAddress = pkgs.lib.mkIf (!defaultListen) "0.0.0.0";
