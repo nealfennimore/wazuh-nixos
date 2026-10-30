@@ -67,12 +67,11 @@ ensure its provisioning unit finishes before these services start.
 
 ### Import and configure
 
-Add this input to the host's existing `flake.nix`. It uses the Buzz clone URL and
-the integration branch containing the modules; commit `flake.lock` to pin the
-resolved revision.
+Add this repository as an input to the host's existing `flake.nix`; commit
+`flake.lock` to pin the resolved revision.
 
 ```nix
-inputs.wazuh.url = "git+https://buzz.54rockybrook.house/git/ca2d2718d08212aa374355554aad2d2396c6531970fefebde668adce12889664/wazuh-agent.git?ref=integration/server-stack";
+inputs.wazuh.url = "git+https://github.com/nealfennimore/wazuh-nixos";
 ```
 
 In your existing `nixosConfigurations.indexer` module list, import the module and

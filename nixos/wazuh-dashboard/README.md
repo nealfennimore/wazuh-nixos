@@ -53,11 +53,11 @@ necessary. Put quoted absolute path strings in Nix, not path literals or
 
 ### Import and configure
 
-Add the integration branch as an input to your existing host `flake.nix`, then
+Add the repository as an input to your existing host `flake.nix`, then
 commit the generated `flake.lock` to pin the resolved revision:
 
 ```nix
-inputs.wazuh.url = "git+https://buzz.54rockybrook.house/git/ca2d2718d08212aa374355554aad2d2396c6531970fefebde668adce12889664/wazuh-agent.git?ref=integration/server-stack";
+inputs.wazuh.url = "git+https://github.com/nealfennimore/wazuh-nixos";
 ```
 
 In the existing `nixosConfigurations.dashboard` module list, add the module and

@@ -23,7 +23,7 @@ The NixOS module supplies its own package. The overlay is optional.
 1. Add the flake as an input.
 
    ```nix
-   inputs.wazuh-agent.url = "git+https://github.com/nealfennimore/wazuh-agent-nixos";
+   inputs.wazuh-agent.url = "git+https://github.com/nealfennimore/wazuh-nixos";
    ```
 
 2. Import the module and set the manager address.

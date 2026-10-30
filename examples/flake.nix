@@ -5,7 +5,7 @@
 {
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
-    wazuh-agent.url = "git+https://github.com/nealfennimore/wazuh-agent-nixos";
+    wazuh-agent.url = "git+https://github.com/nealfennimore/wazuh-nixos";
   };
 
   outputs =
