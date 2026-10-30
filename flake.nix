@@ -141,6 +141,10 @@
         checks.indexer = import ./nixos/tests/indexer { inherit pkgs; };
         packages.wazuh-dashboard = pkgs.callPackage ./pkgs/wazuh-dashboard { };
         checks.dashboard = import ./nixos/tests/dashboard { inherit pkgs; };
+        # The dashboard against services.wazuh-server instead of a fake API.
+        checks.dashboard-server = import ./nixos/tests/dashboard/server.nix {
+          inherit pkgs wazuhServerModule;
+        };
 
         # The wazuh_testing package on its own, so a broken build or a stale
         # source hash surfaces in seconds instead of at VM start:
