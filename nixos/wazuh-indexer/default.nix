@@ -232,7 +232,13 @@ in
         pkgs.coreutils
         pkgs.python3
       ];
+      # securityadmin exits at once when the port is closed, and each retry
+      # starts a JVM that competes with the booting indexer. Wait for the
+      # port first. TimeoutStartSec bounds the wait.
       script = ''
+        until (exec 3<>/dev/tcp/${cfg.admin.host}/${toString cfg.port}) 2>/dev/null; do
+          sleep 2
+        done
         cp -r ${home}/config/opensearch-security/. /run/wazuh-indexer-security/
         chmod -R u+w /run/wazuh-indexer-security
         python3 ${./users.py} ${usersSpec} /run/wazuh-indexer-security/internal_users.yml
@@ -257,7 +263,7 @@ in
         ++ lib.imap0 (i: name: "user-${toString i}:${cfg.users.${name}.passwordHashFile}") userNames;
         Restart = "on-failure";
         RestartSec = 5;
-        TimeoutStartSec = 180;
+        TimeoutStartSec = 600;
       };
     };
   };
