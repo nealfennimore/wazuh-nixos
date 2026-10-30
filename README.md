@@ -569,7 +569,8 @@ nix build .#checks.x86_64-linux.server
 The check boots one VM, waits for every unit, confirms the four chroots and
 the ports, loads the ruleset with `wazuh-analysisd -t`, confirms that
 `wazuh-api-users.service` replaced the default passwords, and authenticates
-against the API with the test PKI. The cluster is not part of the module yet.
+against the API with the test PKI. The cluster is not part of the module
+yet.
 
 `listenIPv6` (default `true`) binds remoted and authd to a dual-stack socket.
 An agent that names the manager by hostname can resolve an IPv6 address first.
@@ -626,18 +627,21 @@ user name and the password to the Wazuh keystore (`queue/keystore`) with
 `wazuh-filebeat` reads `logs/alerts/alerts.json` and writes each alert to
 `wazuh-alerts-4.x-*` on the indexer.
 
-`wazuh-filebeat` runs nixpkgs `filebeat7` with the Wazuh filebeat module and
-the index template from the pinned Wazuh source. It loads the template and
-the ingest pipeline on every connection to the indexer. The unit runs as the
-user `wazuh-filebeat`, a member of the `wazuh` group, under the same sandbox
-as the daemons. It writes only its registry under `/var/lib/wazuh-filebeat`.
-The credentials and the TLS files reach it through `LoadCredential` and
-never enter the store. `services.wazuh-server.filebeat` has these options:
+`wazuh-filebeat` runs filebeat OSS 7.10.2 (`packages.filebeat-oss`), the
+shipper the upstream server package installs, with the Wazuh filebeat module
+and the index template from the pinned Wazuh source. The licensed filebeat
+in nixpkgs (7.17) calls `GET /_license` on connect, and the indexer rejects
+that call. filebeat loads the template and the ingest pipeline on every
+connection to the indexer. The unit runs as the user `wazuh-filebeat`, a
+member of the `wazuh` group, under the same sandbox as the daemons. It
+writes only its registry under `/var/lib/wazuh-filebeat`. The credentials
+and the TLS files reach it through `LoadCredential` and never enter the
+store. `services.wazuh-server.filebeat` has these options:
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `enable` | `true` | Run `wazuh-filebeat` when `indexer` is set. |
-| `package` | `pkgs.filebeat7` | The filebeat package. |
+| `package` | `packages.filebeat-oss` | The filebeat package. |
 | `archives` | `false` | Also ship `logs/archives/archives.json`. Needs `logAll`. |
 | `settings` | `{ }` | Extra `filebeat.yml` keys, merged over the generated ones. |
 

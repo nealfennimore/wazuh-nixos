@@ -597,8 +597,8 @@ in
     # api.users and wazuh-api-users.service.
     ./api-users.nix
     # Alert shipping. It reads services.wazuh-server.indexer and declares
-    # services.wazuh-server.filebeat; the arguments are the static values its
-    # unit shares with the daemons.
+    # services.wazuh-server.filebeat; the arguments are the static values
+    # its unit shares with the daemons.
     (import ./filebeat.nix { inherit stateDir wazuhGroup hardening; })
   ];
 

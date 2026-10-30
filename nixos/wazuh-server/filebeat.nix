@@ -8,12 +8,13 @@
 # root with the indexer password in the filebeat keystore. This module
 # differs in four places:
 #
-# - The filebeat binary is nixpkgs filebeat7 (7.17.x). It is the Apache
-#   licensed build from the beats repository root, the same code the OSS
-#   distribution ships. It has no license or product check against the
-#   cluster (libbeat/esleg/eslegclient/connection.go at v7.17.27), and the
-#   indexer answers as 7.10.2 (compatibility.override_main_response_version
-#   in nixos/wazuh-indexer). The module format did not change inside 7.x.
+# - The filebeat binary is pkgs/filebeat-oss, the upstream filebeat OSS
+#   7.10.2 rpm from the Wazuh package repository. nixpkgs filebeat7 (7.17)
+#   is not usable: since 7.13 libbeat calls GET /_license on connect, and
+#   the indexer answers "Invalid index name [_license]", so the output
+#   never connects. The indexer announces itself as 7.10.2
+#   (compatibility.override_main_response_version in nixos/wazuh-indexer),
+#   which is the version this filebeat expects.
 # - The module and the template come from the pinned wazuh source tree
 #   (pkgs/common, extensions/filebeat/7.x/wazuh-module and
 #   extensions/elasticsearch/7.x/wazuh-template.json at the packaged tag),
@@ -74,9 +75,9 @@ let
   '';
 
   # extensions/filebeat/7.x/filebeat.yml at the packaged tag, with the
-  # output filled in. JSON is valid YAML. The upstream seccomp block that
-  # allows rseq is left out: the 7.17 policy already allows it
-  # (libbeat/common/seccomp/policy_linux_amd64.go).
+  # output filled in. JSON is valid YAML. The seccomp block is upstream's:
+  # the 7.10.2 policy (libbeat/common/seccomp/policy_linux_amd64.go) does
+  # not list rseq, which glibc calls at start on current kernels.
   filebeatConfig = pkgs.writeText "filebeat.yml" (
     builtins.toJSON (
       {
@@ -98,10 +99,10 @@ let
         "setup.template.json.name" = "wazuh";
         "setup.template.overwrite" = true;
         # wazuh-template.json is a legacy template (order, index_patterns,
-        # settings and mappings at the top level), the only kind filebeat
-        # 7.10 knew. 7.17 defaults to composable index templates
-        # (libbeat/template/config.go, Type: IndexTemplateIndex), which
-        # _index_template would reject in this shape.
+        # settings and mappings at the top level). 7.10.2 defaults to
+        # legacy; the key is explicit so that a newer filebeat, which
+        # defaults to composable templates, does not post it to
+        # _index_template, where this shape is rejected.
         "setup.template.type" = "legacy";
         "setup.ilm.enabled" = false;
         "output.elasticsearch" = {
@@ -114,6 +115,15 @@ let
           "ssl.key" = "\${CREDENTIALS_DIRECTORY}/indexer-key";
         };
         "logging.metrics.enabled" = false;
+        seccomp = {
+          default_action = "allow";
+          syscalls = [
+            {
+              action = "allow";
+              names = [ "rseq" ];
+            }
+          ];
+        };
       }
       // fb.settings
     )
@@ -156,7 +166,16 @@ in
       '';
     };
 
-    package = mkPackageOption pkgs "filebeat7" { };
+    package = mkOption {
+      type = types.package;
+      default = pkgs.callPackage ../../pkgs/filebeat-oss { };
+      defaultText = literalExpression "pkgs.callPackage ../../pkgs/filebeat-oss { }";
+      description = ''
+        The filebeat package. The default is filebeat OSS 7.10.2, the
+        version the upstream server ships. filebeat 7.13 and later refuse
+        the indexer (see pkgs/filebeat-oss).
+      '';
+    };
 
     archives = mkOption {
       type = types.bool;
