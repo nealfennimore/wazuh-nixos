@@ -3,7 +3,7 @@
 # Upstream's API starts with two users, wazuh and wazuh-wui, whose passwords
 # equal their names (framework/wazuh/rbac/default/users.yaml at v4.14.8).
 # Operators change them through PUT /security/users/{id} with a password
-# body; the wazuh-passwords-tool does the same call. This module turns that
+# body. The wazuh-passwords-tool does the same call. This module turns that
 # step into a oneshot unit, wazuh-api-users.service, that runs after the API
 # is up:
 #
@@ -21,8 +21,8 @@
 # to 64 characters with an upper-case letter, a lower-case letter, a digit
 # and a character outside [A-Za-z0-9].
 #
-# Scope. The built-in users only. A user that does not exist yet would need
-# an administrator token to create, and this unit holds no token except the
+# Scope. The built-in users only. A user that does not exist yet needs an
+# administrator token to create, and this unit holds no token except the
 # one each user obtains for itself. Both built-in users carry the
 # administrator role, which grants security:update on user:id:*.
 #
@@ -58,7 +58,7 @@ let
   credentialName = name: "api-user-${name}";
 
   # How long the unit waits for the API to answer at all. The API starts a
-  # process pool and loads its RBAC database; on the test VM that takes a
+  # process pool and loads its RBAC database. On the test VM that takes a
   # few minutes after the unit becomes active.
   waitSeconds = 600;
 
@@ -111,7 +111,7 @@ let
 
       # authenticate NAME PASSWORD: print a token, or return 1. The HTTP
       # status lands in $codefile, because the caller runs this in a
-      # command substitution and a variable would not come back.
+      # command substitution and a variable does not come back.
       authenticate() {
         local out code body
         printf 000 > "$codefile"

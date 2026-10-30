@@ -194,7 +194,7 @@ let
     # active-response/bin/fw-drop), so execd needs the write, and the
     # sticky bit keeps the wazuh group from replacing the root-owned links.
     # The directory inode stays across activations because it is a mount
-    # point in the execd namespace; only the entries are refreshed.
+    # point in the execd namespace. Only the entries are refreshed.
     # restart-wazuh is absent from the package (pkgs/wazuh-server).
     if [ -L ${stateDir}/active-response ]; then
       rm ${stateDir}/active-response
@@ -450,7 +450,7 @@ let
     # it defines the <command> blocks and leaves <active-response>
     # commented out (etc/templates/config/generic/ar-definitions.template),
     # so by default no program runs on the manager, and nothing here
-    # grants what a program would need. An operator who adds a server-side
+    # grants what a program needs. An operator who adds a server-side
     # response through extraConfig must also grant its needs to this unit.
     #
     # With active response disabled, execd logs "Active response disabled"
@@ -729,7 +729,7 @@ in
         No <active-response> block is written, so no response runs until
         extraConfig adds one. The unit runs as wazuh with no capability;
         see the daemon table in the module for what the stock response
-        programs would need beyond that. false removes the unit and writes
+        programs need beyond that. false removes the unit and writes
         <active-response><disabled>yes</disabled>.
       '';
     };

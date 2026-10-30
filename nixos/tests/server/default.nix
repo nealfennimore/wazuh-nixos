@@ -33,7 +33,7 @@ let
     "wazuh-apid"
   ];
   # Policy-compliant replacements for the upstream defaults wazuh:wazuh and
-  # wazuh-wui:wazuh-wui. Test values; they live in the store.
+  # wazuh-wui:wazuh-wui. Test values. They live in the store.
   apiPasswords = {
     wazuh = "Wazuh-Api-Test1";
     wazuh-wui = "Wui-Api-Test2";
