@@ -241,6 +241,12 @@ permissions. The service runs as `wazuh-dashboard` with writable runtime/state
 directories and read-only system paths. Module-owned settings override values in
 `settings`, including TLS enforcement and the persistent data path.
 
+The module sets `opensearch.requestTimeout` to 120000 ms by default, and
+`settings` can override it. The upstream default is 30 s. On a busy indexer,
+the first creation of `.kibana_1` can take longer than that. After such a
+timeout the index exists, and the dashboard waits forever for a migration
+that no other instance runs.
+
 Upstream Wazuh 4.14.8's API client explicitly sets `rejectUnauthorized: false`.
 The package patches it to `true`, then conservatively scans executable server JS
 in first-party Wazuh plugins for other verification/hostname overrides. An unknown

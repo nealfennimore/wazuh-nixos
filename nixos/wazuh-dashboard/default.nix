@@ -9,7 +9,15 @@ let
     id = "manager-${toString i}";
     inherit (manager) url port runAs;
   }) cfg.managers;
-  settings = cfg.settings // {
+  # Defaults that cfg.settings can override. The first saved-objects migration
+  # creates .kibana_1. If that request times out, the index exists anyway, and
+  # the dashboard then waits forever for "another instance" to finish the
+  # migration. Index creation took over 30 s, the upstream default, while
+  # securityadmin was still loading on a busy indexer.
+  defaults = {
+    "opensearch.requestTimeout" = 120000;
+  };
+  settings = defaults // cfg.settings // {
     "server.host" = cfg.listenAddress;
     "server.port" = cfg.port;
     "server.ssl.enabled" = true;
