@@ -1,6 +1,13 @@
 {
   description = "Wazuh agent package and NixOS module";
 
+  # The binary cache that the build workflow fills. nix asks once before it
+  # uses these; --accept-flake-config skips the question.
+  nixConfig = {
+    extra-substituters = [ "https://wazuh.cachix.org" ];
+    extra-trusted-public-keys = [ "wazuh.cachix.org-1:NflEnqc62gXNPSzRtdOmuzDyfGK7yrTc6C2znraX3B8=" ];
+  };
+
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";

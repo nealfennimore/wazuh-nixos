@@ -919,13 +919,15 @@ To use the cache, add it to the host that builds the agent:
 
 ```nix
 nix.settings = {
-  substituters = [ "https://wazuh-agent.cachix.org" ];
-  trusted-public-keys = [ "wazuh-agent.cachix.org-1:KBpAGoK+2l+nz8OGVTaNRCZGIqjfWaTWwIvk9eNojRY=" ];
+  substituters = [ "https://wazuh.cachix.org" ];
+  trusted-public-keys = [ "wazuh.cachix.org-1:NflEnqc62gXNPSzRtdOmuzDyfGK7yrTc6C2znraX3B8=" ];
 };
 ```
 
-The public key is on the cache page at `https://app.cachix.org`. Replace
-`<public key>` with it.
+The flake also declares the cache in `nixConfig`. A `nix build` of this flake
+offers to add the substituter and the key once, and `--accept-flake-config`
+accepts them without the prompt. The key is on the cache page at
+`https://app.cachix.org`.
 
 The cache holds the build that fetches the Wazuh source from GitHub. A flake
 input without `?submodules=1`, as in the first section, produces the same
@@ -937,7 +939,7 @@ submodule populated produces a different store path and builds from source.
 1. Create a cache at `https://app.cachix.org`.
 2. Create an auth token for the cache with write access.
 3. Add the token as the repository secret `CACHIX_AUTH_TOKEN`.
-4. If the cache is not named `wazuh-agent-nixos`, add the repository
+4. If the cache is not named `wazuh`, add the repository
    variable `CACHIX_CACHE` with its name.
 
 Pull requests build but do not push. The `aarch64-linux` job uses the

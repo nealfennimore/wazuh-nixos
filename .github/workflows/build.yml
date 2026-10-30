@@ -5,7 +5,7 @@
 #   1. Create a cache at https://app.cachix.org and copy its public key into
 #      the README section "Use the binary cache".
 #   2. Add the cache's auth token as the repository secret CACHIX_AUTH_TOKEN.
-#   3. If the cache is not named wazuh-agent-nixos, set the repository variable
+#   3. If the cache is not named wazuh, set the repository variable
 #      CACHIX_CACHE to its name.
 #
 # The checkout omits the modules/wazuh submodule on purpose. The package then
@@ -27,7 +27,7 @@ permissions:
   contents: read
 
 env:
-  CACHIX_CACHE: ${{ vars.CACHIX_CACHE || 'wazuh-agent' }}
+  CACHIX_CACHE: ${{ vars.CACHIX_CACHE || 'wazuh' }}
 
 jobs:
   build:
