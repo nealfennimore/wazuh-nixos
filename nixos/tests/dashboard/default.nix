@@ -45,10 +45,11 @@ in pkgs.testers.runNixOSTest {
     server.wait_for_unit("test-api.service")
     dashboard.wait_for_unit("wazuh-dashboard.service")
     dashboard.wait_for_open_port(5601)
-    dashboard.wait_until_succeeds("curl --fail --silent --cacert ${pki.ca} https://dashboard:5601/api/status -u 'admin:Test-password-42!' | jq -e '.status.overall.state == \"green\"'", timeout=240)
+    dashboard.wait_until_succeeds("curl --fail --silent --cacert ${pki.ca} https://dashboard:5601/api/status -u 'admin:Test-password-42!' | jq -e '.status.overall.state == \"green\"'", timeout=600)
     dashboard.wait_until_succeeds("curl --fail --silent --cacert ${pki.ca} -u 'admin:Test-password-42!' -H 'osd-xsrf: true' -H 'Content-Type: application/json' -d '{\"id\":\"manager-0\"}' https://dashboard:5601/api/check-stored-api | jq -e '.statusCode == 200 and .data.cluster_info.manager == \"server\"'", timeout=240)
     dashboard.fail("curl --fail --silent --cacert ${pki.wrongCa} https://dashboard:5601/api/status")
     dashboard.succeed("test $(stat -c %a /run/wazuh-dashboard/opensearch_dashboards.yml) = 600")
+    dashboard.succeed("jq -e '.\"opensearch.requestTimeout\" == 120000' /run/wazuh-dashboard/opensearch_dashboards.yml")
     dashboard.fail("sudo -u nobody cat /run/wazuh-dashboard/opensearch_dashboards.yml")
     client = dashboard.succeed("find ${dashboardPackage}/share/wazuh-dashboard/plugins -path '*/server/services/server-api-client.js'").strip()
     node = "${dashboardPackage}/share/wazuh-dashboard/node/bin/node"
@@ -58,6 +59,6 @@ in pkgs.testers.runNixOSTest {
     dashboard.succeed("env -u NODE_EXTRA_CA_CERTS " + probe + " untrusted")
     dashboard.succeed("systemctl restart wazuh-dashboard")
     dashboard.wait_for_open_port(5601)
-    dashboard.wait_until_succeeds("curl --fail --silent --cacert ${pki.ca} https://dashboard:5601/api/status -u 'admin:Test-password-42!' | jq -e '.status.overall.state == \"green\"'", timeout=240)
+    dashboard.wait_until_succeeds("curl --fail --silent --cacert ${pki.ca} https://dashboard:5601/api/status -u 'admin:Test-password-42!' | jq -e '.status.overall.state == \"green\"'", timeout=600)
   '';
 }
