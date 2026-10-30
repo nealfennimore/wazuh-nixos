@@ -81,20 +81,22 @@ in pkgs.testers.runNixOSTest {
         indexer.wait_until_succeeds(kibana.format("Rotated-password-43!"), timeout=120)
         indexer.fail(kibana.format("Test-password-42!"))
 
-        # Stale credential: the status API must answer with a state, and the
-        # state must stay off green for a full minute. A bare "not green"
-        # would also pass while the service is still starting.
-        status = "curl --silent --cacert ${pki.ca} -u 'admin:Test-password-42!' https://dashboard:5601/api/status"
+        # Stale credential. While it cannot authenticate, the dashboard never
+        # becomes ready, and /api/status answers in plain text, not JSON.
+        # Positive proof: the indexer logs the failed kibanaserver login
+        # after this restart. Bounded negative: no 200 for a full minute.
+        since = indexer.succeed("date '+%Y-%m-%d %H:%M:%S'").strip()
         dashboard.succeed("systemctl restart wazuh-dashboard")
         dashboard.wait_for_open_port(5601)
-        dashboard.wait_until_succeeds(status + " | jq -e '.status.overall.state | type == \"string\"'", timeout=600)
-        stale_states = set()
+        indexer.wait_until_succeeds(f"journalctl -u wazuh-indexer --since '{since}' | grep -q 'Authentication finally failed for kibanaserver'", timeout=300)
+        code = "curl --silent --output /dev/null --write-out '%{http_code}' --cacert ${pki.ca} -u 'admin:Test-password-42!' https://dashboard:5601/api/status"
+        stale_codes = set()
         for _ in range(12):
-            state = dashboard.succeed(status + " | jq -r '.status.overall.state'").strip()
-            stale_states.add(state)
-            assert state != "green", "dashboard reported green with a stale kibanaserver password"
+            answer = dashboard.succeed(code).strip()
+            stale_codes.add(answer)
+            assert answer != "200", "dashboard status answered 200 with a stale kibanaserver password"
             time.sleep(5)
-        print(f"states with the stale password: {sorted(stale_states)}")
+        print(f"status codes with the stale password: {sorted(stale_codes)}")
 
         dashboard.succeed("install -m400 ${fixture.rotated}/password /run/secrets/kibanaserver-password")
         dashboard.succeed("systemctl restart wazuh-dashboard")
