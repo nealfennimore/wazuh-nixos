@@ -102,7 +102,6 @@ let
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' EXIT
     cfgfile="$work/curl.cfg"
-    bodyfile="$work/body.json"
     codefile="$work/code"
 
     # Escape a value for a double-quoted curl config string.
@@ -152,6 +151,8 @@ let
     ];
     text = ''
       ${prelude}
+
+      bodyfile="$work/body.json"
 
       # api TOKEN METHOD PATH [BODYFILE]: print the JSON response.
       api() {
