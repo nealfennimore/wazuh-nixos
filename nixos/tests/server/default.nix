@@ -127,7 +127,10 @@ pkgs.testers.runNixOSTest {
         recovery.wait_until_succeeds("systemctl is-failed wazuh-server-setup.service")
         for unit in consumers:
             state = recovery.succeed(f"systemctl show -p ActiveState --value {unit}.service").strip()
-            assert state == "inactive", f"{unit} started after failed setup: {state}"
+            # Manager daemons exit nonzero on SIGTERM, so stopped units may
+            # retain a failed state. Neither state may have a live process.
+            assert state in ["inactive", "failed"], f"{unit} started after failed setup: {state}"
+            recovery.succeed(f"test $(systemctl show -p MainPID --value {unit}.service) = 0")
         recovery.succeed("grep -q retained-state /var/ossec/var/setup-recovery-marker")
         recovery.succeed("mv /run/secrets/wazuh-authd-pass.saved /run/secrets/wazuh-authd-pass")
         recovery.succeed("systemctl reset-failed")
