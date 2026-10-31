@@ -16,7 +16,7 @@
 # the keystore, and that nothing failed. filebeat has its own credential, so
 # the keystore is proved separately: the manager's indexer connector must
 # create the vulnerability state index with it, and must fail to with a
-# wrong password written into the keystore.
+# wrong manager password while filebeat keeps the right one.
 {
   pkgs,
   wazuhServerModule,
@@ -176,27 +176,30 @@ pkgs.testers.runNixOSTest {
         indexer.succeed(states + " | grep -q '^wazuh-states-vulnerabilities-'")
         server.fail("grep -q 'Could not open template file' /var/ossec/logs/ossec.log")
 
-    with subtest("a wrong keystore password is refused, and setup restores the keystore"):
-        # The negative control for the subtest above: the same start with a
-        # wrong password must not create the index.
+    with subtest("a wrong manager password is refused while filebeat keeps its own"):
+        # The negative control for the subtest above. setup has no
+        # RemainAfterExit, so every start of wazuh-modulesd runs it again
+        # through Requires, and it rebuilds the keystore from the password
+        # file. A keystore edited in place does not survive that start, so
+        # the wrong password goes into the file. filebeat keeps running with
+        # the password it loaded at its start.
+        password_file = "/run/secrets/wazuh-indexer-password"
         server.succeed("systemctl stop wazuh-modulesd.service")
         indexer.succeed(curl + " -X DELETE 'https://indexer:9200/wazuh-states-vulnerabilities-*'")
         indexer.fail(states + " | grep -q .")
-        server.succeed(
-            # Without WAZUH_HOME the tool resolves its home from the store path.
-            "cd /var/ossec && WAZUH_HOME=/var/ossec bin/wazuh-keystore -f indexer -k password -v Wrong-password-0"
-            + " && chown -R wazuh:wazuh queue/keystore"
-        )
+        server.succeed(f"cp -p {password_file} {password_file}.saved")
+        server.succeed(f"printf '%s' Wrong-password-0 > {password_file}")
         mark = server.succeed("wc -l < /var/ossec/logs/ossec.log").strip()
         server.succeed("systemctl start wazuh-modulesd.service")
         server.wait_until_succeeds(f"tail -n +{int(mark) + 1} /var/ossec/logs/ossec.log | grep -qF \"{refused}\"", timeout=600)
         server.fail(f"tail -n +{int(mark) + 1} /var/ossec/logs/ossec.log | grep -qF '{connected}'")
         indexer.fail(states + " | grep -q .")
-        # Setup rebuilds the keystore from the configured files, and
-        # Requires restarts the consumers with it.
+        server.succeed("systemctl is-active wazuh-filebeat.service")
+        # Restore the file. The next start rebuilds the keystore with it.
+        server.succeed("systemctl stop wazuh-modulesd.service")
+        server.succeed(f"mv {password_file}.saved {password_file}")
         mark = server.succeed("wc -l < /var/ossec/logs/ossec.log").strip()
-        server.succeed("systemctl restart wazuh-server-setup.service")
-        server.wait_for_unit("wazuh-modulesd.service")
+        server.succeed("systemctl start wazuh-modulesd.service")
         server.wait_until_succeeds(f"tail -n +{int(mark) + 1} /var/ossec/logs/ossec.log | grep -qF '{connected}'", timeout=600)
         indexer.succeed(states + " | grep -q '^wazuh-states-vulnerabilities-'")
 
