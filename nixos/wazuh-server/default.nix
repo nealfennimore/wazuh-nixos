@@ -566,7 +566,7 @@ let
         "network.target"
       ]
       ++ unit.after;
-      wants = [ "wazuh-server-setup.service" ];
+      requires = [ "wazuh-server-setup.service" ];
       path = cfg.path ++ [
         "/run/current-system/sw"
         "/run/wrappers"
@@ -902,7 +902,7 @@ in
           "wazuh-db.service"
           "wazuh-analysisd.service"
         ];
-        wants = [ "wazuh-server-setup.service" ];
+        requires = [ "wazuh-server-setup.service" ];
         path = cfg.path ++ [
           "/run/current-system/sw"
           "/run/wrappers"

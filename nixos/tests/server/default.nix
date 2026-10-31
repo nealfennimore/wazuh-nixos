@@ -98,7 +98,66 @@ pkgs.testers.runNixOSTest {
       ];
     };
 
+  # Real filebeat startup; delivery is covered by server-indexer.
+  nodes.recovery = {
+    imports = [ wazuhServerModule ];
+    virtualisation.memorySize = 3072;
+    virtualisation.diskSize = 4096;
+    services.wazuh-server = {
+      enable = true;
+      auth.passwordFile = "/run/secrets/wazuh-authd-pass";
+      api.tls = {
+        certificate = pki.server.cert;
+        key = pki.server.key;
+      };
+      indexer = {
+        hosts = [ "https://127.0.0.1:9200" ];
+        tls = {
+          ca = pki.ca;
+          certificate = pki.server.cert;
+          key = pki.server.key;
+        };
+        usernameFile = "/run/secrets/indexer-user";
+        passwordFile = "/run/secrets/indexer-pass";
+      };
+    };
+    systemd.tmpfiles.rules = [
+      "f /run/secrets/wazuh-authd-pass 0400 root root - test-enrollment-password"
+      "f /run/secrets/indexer-user 0400 root root - admin"
+      "f /run/secrets/indexer-pass 0400 root root - Test-password-42!"
+    ];
+  };
+
   testScript = ''
+    with subtest("failed setup blocks consumers with existing state and recovers"):
+        recovery.start()
+        recovery.wait_for_unit("multi-user.target")
+        consumers = ["wazuh-analysisd", "wazuh-apid", "wazuh-filebeat"]
+        for unit in consumers:
+            recovery.wait_for_unit(f"{unit}.service")
+        recovery.succeed("test -s /var/ossec/etc/ossec.conf")
+        recovery.succeed("test -s /var/ossec/etc/authd.pass")
+        recovery.succeed("echo retained-state > /var/ossec/var/setup-recovery-marker")
+        # Only setup needs this source; retain the copied secret and config.
+        recovery.succeed("mv /run/secrets/wazuh-authd-pass /run/secrets/wazuh-authd-pass.saved")
+        recovery.execute("systemctl restart wazuh-server.target")
+        recovery.wait_until_succeeds("systemctl is-failed wazuh-server-setup.service")
+        for unit in consumers:
+            state = recovery.succeed(f"systemctl show -p ActiveState --value {unit}.service").strip()
+            # Manager daemons exit nonzero on SIGTERM, so stopped units may
+            # retain a failed state. Neither state may have a live process.
+            assert state in ["inactive", "failed"], f"{unit} started after failed setup: {state}"
+            recovery.succeed(f"test $(systemctl show -p MainPID --value {unit}.service) = 0")
+        recovery.succeed("grep -q retained-state /var/ossec/var/setup-recovery-marker")
+        recovery.succeed("mv /run/secrets/wazuh-authd-pass.saved /run/secrets/wazuh-authd-pass")
+        recovery.succeed("systemctl reset-failed")
+        recovery.succeed("systemctl restart wazuh-server.target")
+        for unit in consumers:
+            recovery.wait_for_unit(f"{unit}.service")
+        recovery.succeed("test $(systemctl show -p Result --value wazuh-server-setup.service) = success")
+        recovery.succeed("grep -q retained-state /var/ossec/var/setup-recovery-marker")
+        recovery.shutdown()
+
     server.start()
     server.wait_for_unit("multi-user.target")
 
@@ -307,6 +366,12 @@ pkgs.testers.runNixOSTest {
         server.fail("grep CRITICAL /var/ossec/logs/ossec.log")
 
     with subtest("a second activation keeps host state and refreshes package files"):
+        # Requires propagates setup restarts to the consumers. Stop them
+        # before planting markers so their shutdown cannot rewrite state.
+        units = ${builtins.toJSON (chrootDaemons ++ otherDaemons)}
+        # Stopping the target alone does not wait for propagated stop jobs.
+        server.succeed("systemctl stop wazuh-server.target wazuh-api-users.service "
+                       + " ".join(f"{unit}.service" for unit in units))
         server.succeed("echo marker-keys >> /var/ossec/etc/client.keys")
         server.succeed("echo marker-local >> /var/ossec/etc/local_internal_options.conf")
         server.succeed("echo '<!-- marker-rule -->' >> /var/ossec/ruleset/rules/0010-rules_config.xml")
@@ -316,7 +381,12 @@ pkgs.testers.runNixOSTest {
         server.succeed("grep -q marker-local /var/ossec/etc/local_internal_options.conf")
         server.fail("grep -q marker-rule /var/ossec/ruleset/rules/0010-rules_config.xml")
         assert cert == server.succeed("sha256sum /var/ossec/etc/sslmanager.cert").strip()
+        # The preservation markers are deliberately not valid daemon input.
+        server.succeed("sed -i '/^marker-keys$/d' /var/ossec/etc/client.keys")
+        server.succeed("sed -i '/^marker-local$/d' /var/ossec/etc/local_internal_options.conf")
+        server.succeed("systemctl restart wazuh-server.target")
         for unit in ${builtins.toJSON (chrootDaemons ++ otherDaemons)}:
-            server.succeed(f"systemctl is-active {unit}.service")
+            server.wait_for_unit(f"{unit}.service")
+
   '';
 }

@@ -221,10 +221,8 @@ in
         "network-online.target"
         "wazuh-analysisd.service"
       ];
-      wants = [
-        "wazuh-server-setup.service"
-        "network-online.target"
-      ];
+      requires = [ "wazuh-server-setup.service" ];
+      wants = [ "network-online.target" ];
       serviceConfig = hardening // {
         Type = "exec";
         User = filebeatUser;
