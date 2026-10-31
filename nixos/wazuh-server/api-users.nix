@@ -47,8 +47,8 @@
 # administrator role, which grants security:update on user:id:*.
 #
 # Transport. The unit talks to https://<api.serverName>:<api.port>. With
-# api.tls set, curl verifies the server against the installed certificate
-# copy under api/configuration/ssl/server.crt: a self-signed certificate is
+# api.tls set, curl verifies the server against api.tls.certificate, loaded
+# through LoadCredential as api-cert: a self-signed certificate is
 # its own anchor, and curl trusts a CA-signed leaf found in --cacert
 # directly (X509_V_FLAG_PARTIAL_CHAIN, set by curl since 7.68). The host
 # name must then be one the certificate names, which is why api.serverName
@@ -78,10 +78,15 @@ let
   credentialName = name: "api-user-${name}";
   defaultCredentialName = name: "api-user-${name}-default";
 
+  # The certificate curl verifies the API against, as a credential: the
+  # installed copy under api/configuration/ssl sits in a directory only
+  # wazuh can enter, and the guard runs as root without CAP_DAC_OVERRIDE.
+  certCredential = optional (cfg.api.tls != null) "api-cert:${toString cfg.api.tls.certificate}";
+
   # How long the unit waits for the API to answer at all. The API starts a
-  # process pool and loads its RBAC database. On the test VM that takes a
-  # few minutes after the unit becomes active.
-  waitSeconds = 600;
+  # process pool and creates its RBAC database. On a loaded test VM that
+  # took over ten minutes once (635 s), so the budget is twenty.
+  waitSeconds = 1200;
 
   # Shared by both scripts: the connection settings, a private work
   # directory, the wait for the API, and authenticate().
@@ -90,7 +95,7 @@ let
     base="https://${cfg.api.serverName}:${toString cfg.api.port}"
     ${
       if cfg.api.tls != null then
-        ''tls=(--cacert ${stateDir}/api/configuration/ssl/server.crt)''
+        ''tls=(--cacert "$CREDENTIALS_DIRECTORY/api-cert")''
       else
         ''tls=(--insecure)''
     }
@@ -370,6 +375,8 @@ in
         Group = wazuhGroup;
         TimeoutStartSec = waitSeconds + 120;
         LoadCredential =
+          certCredential
+          ++
           mapAttrsToList (name: user: "${credentialName name}:${toString user.passwordFile}") cfg.api.users
           ++ mapAttrsToList (name: user: "${defaultCredentialName name}:${toString user.defaultPasswordFile}") (
             filterAttrs (_: user: user.defaultPasswordFile != null) cfg.api.users
@@ -387,6 +394,7 @@ in
       serviceConfig = sandbox // {
         Type = "oneshot";
         TimeoutStartSec = waitSeconds + 120;
+        LoadCredential = certCredential;
         ExecStart = "${guard}/bin/wazuh-apid-guard";
       };
     };

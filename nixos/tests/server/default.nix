@@ -44,6 +44,8 @@ let
 in
 pkgs.testers.runNixOSTest {
   name = "wazuh-server";
+  # Two API starts, each over ten minutes on a loaded builder.
+  globalTimeout = 2 * 3600;
 
   nodes.server =
     { pkgs, ... }:
@@ -283,7 +285,7 @@ pkgs.testers.runNixOSTest {
         # default passwords and the network.
         server.fail("systemctl start wazuh-api-users.service")
         server.succeed("systemctl is-failed wazuh-api-users.service")
-        server.wait_until_fails("systemctl is-active wazuh-apid.service", timeout=900)
+        server.wait_until_fails("systemctl is-active wazuh-apid.service", timeout=1500)
         server.succeed("systemctl is-failed wazuh-apid-guard.service")
         server.succeed("journalctl -u wazuh-apid-guard.service | grep -q 'wazuh: the upstream default password still authenticates'")
         server.succeed("journalctl -u wazuh-apid-guard.service | grep -q 'stopping wazuh-apid.service'")
