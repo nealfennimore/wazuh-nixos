@@ -123,9 +123,13 @@ pkgs.testers.runNixOSTest {
         server.succeed("test $(systemctl show -p ProtectSystem --value wazuh-filebeat.service) = strict")
         server.succeed("test $(systemctl show -p NoNewPrivileges --value wazuh-filebeat.service) = yes")
         server.succeed("test -z \"$(systemctl show -p CapabilityBoundingSet --value wazuh-filebeat.service)\"")
+        # wazuh-modulesd creates 14 state templates and indices in the
+        # same window. On a loaded builder each cluster state update took
+        # over 10 s, and filebeat's pipeline upload timed out at 30 s and
+        # retried with backoff past 300 s.
         server.wait_until_succeeds(
             "journalctl -u wazuh-filebeat.service | grep -q 'Connection to backoff(elasticsearch(https://indexer:9200)) established'",
-            timeout=300,
+            timeout=900,
         )
         # The generated filebeat.yml references the environment, and the
         # password is neither in it nor in the registry.
