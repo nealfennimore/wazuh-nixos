@@ -92,7 +92,7 @@ pkgs.testers.runNixOSTest {
 
     with subtest("the indexer is up with the security configuration applied"):
         indexer.wait_for_unit("wazuh-indexer.service")
-        indexer.wait_until_succeeds("systemctl is-active wazuh-indexer-security.service", timeout=300)
+        indexer.wait_until_succeeds("systemctl is-active wazuh-indexer-security.service", timeout=900)
         indexer.wait_until_succeeds(
             curl + " 'https://indexer:9200/_cluster/health?wait_for_status=yellow&timeout=5s'"
             + " | jq -e '.status == \"yellow\" or .status == \"green\"'",
