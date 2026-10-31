@@ -8,6 +8,9 @@
 # wazuh-api-users.service sets the API passwords from root-only files, and
 # the API answers an authenticated request over TLS with the test PKI and
 # refuses the upstream default password, a wrong password and a wrong CA.
+# It also proves that no password was a process argument (kernel audit),
+# that defaultPasswordFile reaches the unit as a credential, and that
+# wazuh-apid-guard.service stops a fresh API whose provisioning failed.
 #
 # It does not enroll an agent, ship an alert to an indexer, or run a
 # response. Those are checks.server-enrollment, checks.server-indexer and
@@ -62,6 +65,8 @@ pkgs.testers.runNixOSTest {
         api.users = {
           wazuh.passwordFile = "/run/secrets/wazuh-api-wazuh";
           wazuh-wui.passwordFile = "/run/secrets/wazuh-api-wui";
+          # The upstream default at first boot. A later subtest replaces it.
+          wazuh-wui.defaultPasswordFile = "/run/secrets/wazuh-api-wui-previous";
         };
         auth.passwordFile = "/run/secrets/wazuh-authd-pass";
       };
@@ -73,7 +78,17 @@ pkgs.testers.runNixOSTest {
         "f /run/secrets/wazuh-authd-pass 0400 root root - test-enrollment-password"
         "f /run/secrets/wazuh-api-wazuh 0400 root root - ${apiPasswords.wazuh}"
         "f /run/secrets/wazuh-api-wui 0400 root root - ${apiPasswords.wazuh-wui}"
+        "f /run/secrets/wazuh-api-wui-previous 0400 root root - wazuh-wui"
       ];
+
+      # Record every execve by the wazuh user with its arguments, so a
+      # subtest can prove that no password was a process argument. The user
+      # exists when the rules load: activation creates users before PID 1.
+      security.audit = {
+        enable = true;
+        rules = [ "-a always,exit -F arch=b64 -S execve -F uid=wazuh -k wazuh-exec" ];
+      };
+      security.auditd.enable = true;
 
       environment.systemPackages = [
         pkgs.curl
@@ -197,7 +212,7 @@ pkgs.testers.runNixOSTest {
         server.succeed(f"printf '%s' '{drift_password}' > /run/secrets/wazuh-api-wazuh")
         server.fail("systemctl restart wazuh-api-users.service")
         server.succeed("systemctl is-failed wazuh-api-users.service")
-        server.succeed("journalctl -u wazuh-api-users.service | grep -q 'neither the configured password nor the upstream default authenticates'")
+        server.succeed("journalctl -u wazuh-api-users.service | grep -q 'neither the configured password nor the previous password authenticates'")
         server.succeed(base + " -u wazuh:${apiPasswords.wazuh} " + auth)
         server.fail(base + f" -u wazuh:{drift_password} " + auth)
         server.fail(base + " -u wazuh:wazuh " + auth)
@@ -209,6 +224,81 @@ pkgs.testers.runNixOSTest {
         server.succeed("systemctl restart wazuh-api-users.service")
         server.succeed("test $(systemctl show -p Result --value wazuh-api-users.service) = success")
         server.succeed(base + " -u wazuh:${apiPasswords.wazuh} " + auth)
+
+    with subtest("no password was an argument of a process run as wazuh"):
+        # Kernel audit recorded every execve by the wazuh user. A canary run
+        # as wazuh proves that the detector sees arguments, then the
+        # passwords that the unit handled must be absent.
+        server.wait_for_unit("auditd.service")
+        server.succeed("runuser -u wazuh -- ${pkgs.jq}/bin/jq -n --arg p Canary-Argv-Test9 '$p' > /dev/null")
+        server.wait_until_succeeds("ausearch -i -k wazuh-exec | grep -F Canary-Argv-Test9", timeout=60)
+        for password in ["${apiPasswords.wazuh}", "${apiPasswords.wazuh-wui}", drift_password]:
+            server.fail(f"ausearch -i -k wazuh-exec | grep -F -- '{password}'")
+
+    with subtest("defaultPasswordFile supplies a previous password through LoadCredential"):
+        previous = "Previous-Wui-Test4!"
+        replacement = "Wui-Api-Test5!"
+        # Move wazuh-wui off its provisioned password the way an operator
+        # would, through the API.
+        token = server.succeed(base + " -u wazuh-wui:${apiPasswords.wazuh-wui} " + auth).strip()
+        wui_id = server.succeed(
+            base + f" -H 'Authorization: Bearer {token}' https://server:55000/security/users"
+            + " | jq -r '.data.affected_items[] | select(.username == \"wazuh-wui\") | .id'"
+        ).strip()
+        server.succeed(
+            base + f" -H 'Authorization: Bearer {token}' -H 'Content-Type: application/json'"
+            + f" -X PUT -d '{{\"password\": \"{previous}\"}}' https://server:55000/security/users/{wui_id}"
+            + " | jq -e '.error == 0'"
+        )
+        server.fail(base + " -u wazuh-wui:${apiPasswords.wazuh-wui} " + auth)
+        # With a stale previous password the unit refuses to guess.
+        server.succeed(f"printf '%s' '{replacement}' > /run/secrets/wazuh-api-wui")
+        server.fail("systemctl restart wazuh-api-users.service")
+        server.succeed("journalctl -u wazuh-api-users.service | grep -q 'wazuh-wui: neither the configured password nor the previous password authenticates'")
+        # With the real previous password it sets the replacement.
+        server.succeed(f"printf '%s' '{previous}' > /run/secrets/wazuh-api-wui-previous")
+        server.succeed("systemctl reset-failed wazuh-api-users.service")
+        server.succeed("systemctl restart wazuh-api-users.service")
+        server.succeed("journalctl -u wazuh-api-users.service | grep -q 'wazuh-wui: password set'")
+        server.succeed(base + f" -u wazuh-wui:{replacement} " + auth)
+        server.fail(base + f" -u wazuh-wui:{previous} " + auth)
+        # The previous password reached the unit as a credential, not as
+        # part of the store script, and it is not in the journal.
+        server.fail(f"grep -rF -- '{previous}' /nix/store/*-wazuh-api-users/")
+        server.fail(f"journalctl -u wazuh-api-users.service | grep -F -- '{previous}'")
+
+    with subtest("a fresh API whose provisioning fails is stopped by the guard"):
+        # First boot again: the API recreates rbac.db with the upstream
+        # default users when the file is missing
+        # (framework/wazuh/rbac/orm.py, check_database_integrity, v4.14.8).
+        # The previous-password file goes back to the upstream default.
+        rbac = "/var/ossec/api/configuration/security/rbac.db"
+        server.succeed(f"test -f {rbac}")
+        server.succeed("systemctl stop wazuh-api-users.service wazuh-apid.service")
+        server.succeed(f"mv {rbac} {rbac}.saved")
+        server.succeed("printf '%s' wazuh-wui > /run/secrets/wazuh-api-wui-previous")
+        server.succeed("mv /run/secrets/wazuh-api-wazuh /run/secrets/wazuh-api-wazuh.saved")
+        # Requires starts the API. The missing credential fails the unit
+        # before its script runs, so only the guard stands between the
+        # default passwords and the network.
+        server.fail("systemctl start wazuh-api-users.service")
+        server.succeed("systemctl is-failed wazuh-api-users.service")
+        server.wait_until_fails("systemctl is-active wazuh-apid.service", timeout=900)
+        server.succeed("systemctl is-failed wazuh-apid-guard.service")
+        server.succeed("journalctl -u wazuh-apid-guard.service | grep -q 'wazuh: the upstream default password still authenticates'")
+        server.succeed("journalctl -u wazuh-apid-guard.service | grep -q 'stopping wazuh-apid.service'")
+        server.fail("ss -ltn | grep -q ':55000 '")
+        server.fail(base + " -u wazuh:wazuh " + auth)
+        # Recovery: restore the file and restart the unit, which starts the
+        # API again and provisions the fresh database.
+        server.succeed("mv /run/secrets/wazuh-api-wazuh.saved /run/secrets/wazuh-api-wazuh")
+        server.succeed("systemctl reset-failed wazuh-api-users.service wazuh-apid-guard.service")
+        server.succeed("systemctl start wazuh-api-users.service")
+        server.succeed("systemctl is-active wazuh-apid.service")
+        server.succeed(base + " -u wazuh:${apiPasswords.wazuh} " + auth)
+        server.succeed(base + f" -u wazuh-wui:{replacement} " + auth)
+        server.fail(base + " -u wazuh:wazuh " + auth)
+        server.fail(base + " -u wazuh-wui:wazuh-wui " + auth)
 
     with subtest("nothing died"):
         server.succeed("test -z \"$(systemctl list-units --state=failed --no-legend 'wazuh-*')\"")

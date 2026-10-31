@@ -11,15 +11,35 @@
 #   2. For each configured user, authenticate with the password from the
 #      file. Success means the password is current and there is nothing to
 #      do, so a second run of the unit is a no-op.
-#   3. Otherwise authenticate with the upstream default password, look the
-#      user id up in GET /security/users, PUT the new password, and prove it
-#      by authenticating with it.
+#   3. Otherwise authenticate with the previous password: the content of
+#      defaultPasswordFile, or the upstream default. Look the user id up in
+#      GET /security/users, PUT the new password, and prove it by
+#      authenticating with it.
 #   4. If neither password authenticates, fail with a message. The password
 #      was changed outside this unit, and the unit refuses to guess.
 #
 # The policy that the API enforces (framework/wazuh/security.py:23,227): 8
 # to 64 characters with an upper-case letter, a lower-case letter, a digit
 # and a character outside [A-Za-z0-9].
+#
+# Secrets. Every password reaches the unit through LoadCredential and stays
+# in files and shell variables. No password is an argument of an external
+# command: /proc/<pid>/cmdline is readable by every local user, and NixOS
+# mounts /proc without hidepid. curl reads the user and the bearer header
+# from a config file, and jq reads the new password from stdin.
+#
+# Fail closed. The API itself does not know whether its users still carry
+# the upstream defaults. When wazuh-api-users.service fails, for any reason
+# including a missing credential file, OnFailure starts
+# wazuh-apid-guard.service. The guard waits for the API, authenticates each
+# configured user with the upstream default password, and stops
+# wazuh-apid.service if any of them succeeds. A host whose provisioning
+# failed on first boot then has no listening API instead of one that
+# accepts wazuh:wazuh. The guard leaves the API alone when the defaults do
+# not authenticate, so a later failure, such as a credential file that
+# went missing after provisioning, does not take a provisioned API down.
+# To recover, fix the file and restart wazuh-api-users.service, which
+# starts the API again through Requires.
 #
 # Scope. The built-in users only. A user that does not exist yet needs an
 # administrator token to create, and this unit holds no token except the
@@ -56,11 +76,72 @@ let
   ];
 
   credentialName = name: "api-user-${name}";
+  defaultCredentialName = name: "api-user-${name}-default";
 
   # How long the unit waits for the API to answer at all. The API starts a
   # process pool and loads its RBAC database. On the test VM that takes a
   # few minutes after the unit becomes active.
   waitSeconds = 600;
+
+  # Shared by both scripts: the connection settings, a private work
+  # directory, the wait for the API, and authenticate().
+  prelude = ''
+    umask 077
+    base="https://${cfg.api.serverName}:${toString cfg.api.port}"
+    ${
+      if cfg.api.tls != null then
+        ''tls=(--cacert ${stateDir}/api/configuration/ssl/server.crt)''
+      else
+        ''tls=(--insecure)''
+    }
+    common=(--silent --show-error --max-time 30 "''${tls[@]}")
+
+    # curl reads the user and the bearer header from a config file, so
+    # neither appears on a command line that every process on the host can
+    # read. The directory is the unit's private /tmp.
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    cfgfile="$work/curl.cfg"
+    bodyfile="$work/body.json"
+    codefile="$work/code"
+
+    # Escape a value for a double-quoted curl config string.
+    quote() {
+      local s=''${1//\\/\\\\}
+      printf '%s' "''${s//\"/\\\"}"
+    }
+
+    # Any HTTP status means the API answers. 000 is curl's "no response".
+    deadline=$((SECONDS + ${toString waitSeconds}))
+    while :; do
+      code=$(curl "''${common[@]}" -o /dev/null -w '%{http_code}' "$base/" || true)
+      if [ "$code" != 000 ]; then
+        break
+      fi
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        echo "the API at $base did not answer within ${toString waitSeconds} s" >&2
+        exit 1
+      fi
+      sleep 2
+    done
+
+    # authenticate NAME PASSWORD: print a token, or return 1. The HTTP
+    # status lands in $codefile, because the caller runs this in a
+    # command substitution and a variable does not come back. printf is a
+    # shell builtin, so the password is not a process argument.
+    authenticate() {
+      local out code body
+      printf 000 > "$codefile"
+      printf 'user = "%s:%s"\n' "$(quote "$1")" "$(quote "$2")" > "$cfgfile"
+      out=$(curl "''${common[@]}" -K "$cfgfile" -X POST -w '\n%{http_code}' \
+        "$base/security/user/authenticate?raw=true") || return 1
+      code=''${out##*$'\n'}
+      body=''${out%$'\n'*}
+      printf '%s' "$code" > "$codefile"
+      [ "$code" = 200 ] || return 1
+      printf '%s' "$body"
+    }
+  '';
 
   script = pkgs.writeShellApplication {
     name = "wazuh-api-users";
@@ -70,60 +151,7 @@ let
       pkgs.jq
     ];
     text = ''
-      umask 077
-      base="https://${cfg.api.serverName}:${toString cfg.api.port}"
-      ${
-        if cfg.api.tls != null then
-          ''tls=(--cacert ${stateDir}/api/configuration/ssl/server.crt)''
-        else
-          ''tls=(--insecure)''
-      }
-      common=(--silent --show-error --max-time 30 "''${tls[@]}")
-
-      # curl reads the user and the bearer header from a config file, so
-      # neither appears on a command line that every process on the host can
-      # read. The directory is the unit's private /tmp.
-      work="$(mktemp -d)"
-      trap 'rm -rf "$work"' EXIT
-      cfgfile="$work/curl.cfg"
-      bodyfile="$work/body.json"
-      codefile="$work/code"
-
-      # Escape a value for a double-quoted curl config string.
-      quote() {
-        local s=''${1//\\/\\\\}
-        printf '%s' "''${s//\"/\\\"}"
-      }
-
-      # Any HTTP status means the API answers. 000 is curl's "no response".
-      deadline=$((SECONDS + ${toString waitSeconds}))
-      while :; do
-        code=$(curl "''${common[@]}" -o /dev/null -w '%{http_code}' "$base/" || true)
-        if [ "$code" != 000 ]; then
-          break
-        fi
-        if [ "$SECONDS" -ge "$deadline" ]; then
-          echo "the API at $base did not answer within ${toString waitSeconds} s" >&2
-          exit 1
-        fi
-        sleep 2
-      done
-
-      # authenticate NAME PASSWORD: print a token, or return 1. The HTTP
-      # status lands in $codefile, because the caller runs this in a
-      # command substitution and a variable does not come back.
-      authenticate() {
-        local out code body
-        printf 000 > "$codefile"
-        printf 'user = "%s:%s"\n' "$(quote "$1")" "$(quote "$2")" > "$cfgfile"
-        out=$(curl "''${common[@]}" -K "$cfgfile" -X POST -w '\n%{http_code}' \
-          "$base/security/user/authenticate?raw=true") || return 1
-        code=''${out##*$'\n'}
-        body=''${out%$'\n'*}
-        printf '%s' "$code" > "$codefile"
-        [ "$code" = 200 ] || return 1
-        printf '%s' "$body"
-      }
+      ${prelude}
 
       # api TOKEN METHOD PATH [BODYFILE]: print the JSON response.
       api() {
@@ -136,21 +164,29 @@ let
         fi
       }
 
-      # set_password NAME DEFAULT FILE
+      # set_password NAME FILE [DEFAULTFILE]
+      # FILE holds the password the user must have. DEFAULTFILE holds the
+      # password the user has now. Without it, the upstream default applies,
+      # which is the user name.
       set_password() {
-        local name=$1 default=$2 file=$3
-        local wanted token id response
+        local name=$1 file=$2 defaultfile=''${3:-}
+        local wanted default token id response
         wanted=$(cat "$file")
         if [ -z "$wanted" ]; then
           echo "$name: the password file is empty" >&2
           exit 1
+        fi
+        if [ -n "$defaultfile" ]; then
+          default=$(cat "$defaultfile")
+        else
+          default=$name
         fi
         if authenticate "$name" "$wanted" > /dev/null; then
           echo "$name: the password is current"
           return 0
         fi
         if ! token=$(authenticate "$name" "$default"); then
-          echo "$name: neither the configured password nor the upstream default authenticates (last HTTP status $(cat "$codefile")). The password was changed outside this unit. Put the current password in passwordFile, or reset it through the API." >&2
+          echo "$name: neither the configured password nor the previous password authenticates (last HTTP status $(cat "$codefile")). The password was changed outside this unit. Put the current password in defaultPasswordFile, or reset it through the API." >&2
           exit 1
         fi
         response=$(api "$token" GET /security/users)
@@ -159,7 +195,8 @@ let
           echo "$name: not found in GET /security/users: $response" >&2
           exit 1
         fi
-        jq -n --arg p "$wanted" '{password: $p}' > "$bodyfile"
+        # The password goes to jq on stdin, never as an argument.
+        printf '%s' "$wanted" | jq -Rs '{password: .}' > "$bodyfile"
         response=$(api "$token" PUT "/security/users/$id" "$bodyfile")
         if ! printf '%s' "$response" | jq -e '.error == 0 and .data.total_affected_items == 1' > /dev/null; then
           echo "$name: PUT /security/users/$id failed: $response" >&2
@@ -175,44 +212,108 @@ let
       ${concatStringsSep "\n" (
         mapAttrsToList (
           name: user:
-          "set_password ${escapeShellArg name} ${escapeShellArg user.defaultPassword} \"$CREDENTIALS_DIRECTORY/${credentialName name}\""
+          "set_password ${escapeShellArg name} \"$CREDENTIALS_DIRECTORY/${credentialName name}\""
+          + optionalString (
+            user.defaultPasswordFile != null
+          ) " \"$CREDENTIALS_DIRECTORY/${defaultCredentialName name}\""
         ) cfg.api.users
       )}
     '';
+  };
+
+  guard = pkgs.writeShellApplication {
+    name = "wazuh-apid-guard";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.curl
+      pkgs.systemd
+    ];
+    text = ''
+      ${prelude}
+
+      live=0
+      for name in ${concatMapStringsSep " " escapeShellArg (attrNames cfg.api.users)}; do
+        if authenticate "$name" "$name" > /dev/null; then
+          echo "$name: the upstream default password still authenticates"
+          live=1
+        else
+          echo "$name: the upstream default password does not authenticate (HTTP status $(cat "$codefile"))"
+        fi
+      done
+      if [ "$live" = 1 ]; then
+        echo "stopping wazuh-apid.service: wazuh-api-users.service failed and a built-in user still has its upstream default password. Fix the password files, then restart wazuh-api-users.service." >&2
+        systemctl stop wazuh-apid.service
+        exit 1
+      fi
+      echo "no built-in user authenticates with its upstream default password; the API stays up"
+    '';
+  };
+
+  # The daemons' sandbox from default.nix, for processes that write nothing
+  # but their private /tmp: no capability, read-only root, no writable path
+  # at all.
+  sandbox = {
+    CapabilityBoundingSet = [ "" ];
+    AmbientCapabilities = [ "" ];
+    NoNewPrivileges = true;
+    ProtectSystem = "strict";
+    ProtectHome = true;
+    PrivateTmp = true;
+    PrivateDevices = true;
+    ProtectClock = true;
+    ProtectControlGroups = true;
+    ProtectHostname = true;
+    ProtectKernelLogs = true;
+    ProtectKernelModules = true;
+    ProtectKernelTunables = true;
+    RestrictNamespaces = true;
+    RestrictRealtime = true;
+    RestrictSUIDSGID = true;
+    LockPersonality = true;
+    RemoveIPC = true;
+    SystemCallArchitectures = "native";
+    SystemCallFilter = [ "@system-service" ];
+    MemoryDenyWriteExecute = true;
+    UMask = "0077";
+    # AF_UNIX for the name service socket and the systemd bus, the two
+    # INET families for the API.
+    RestrictAddressFamilies = [
+      "AF_UNIX"
+      "AF_INET"
+      "AF_INET6"
+    ];
   };
 in
 {
   options.services.wazuh-server.api = {
     users = mkOption {
       type = types.attrsOf (
-        types.submodule (
-          { name, ... }:
-          {
-            options = {
-              passwordFile = mkOption {
-                type = types.path;
-                description = ''
-                  File with the password this user must have. Read by PID 1
-                  through LoadCredential, so it can be root-owned. Keep it
-                  outside the Nix store. The API requires 8 to 64 characters
-                  with an upper-case letter, a lower-case letter, a digit and
-                  a symbol.
-                '';
-              };
-              defaultPassword = mkOption {
-                type = types.str;
-                default = name;
-                defaultText = literalExpression "name";
-                description = ''
-                  The password the user has before this module changes it.
-                  Upstream ships every built-in user with its own name as
-                  the password. The unit authenticates with it only when
-                  passwordFile does not authenticate.
-                '';
-              };
+        types.submodule {
+          options = {
+            passwordFile = mkOption {
+              type = types.path;
+              description = ''
+                File with the password this user must have. Read by PID 1
+                through LoadCredential, so it can be root-owned. Keep it
+                outside the Nix store. The API requires 8 to 64 characters
+                with an upper-case letter, a lower-case letter, a digit and
+                a symbol.
+              '';
             };
-          }
-        )
+            defaultPasswordFile = mkOption {
+              type = types.nullOr types.path;
+              default = null;
+              description = ''
+                File with the password the user has before this module
+                changes it. Read through LoadCredential like passwordFile.
+                Keep it outside the Nix store. Without it the upstream
+                default applies, which is the user name. The unit
+                authenticates with this password only when passwordFile does
+                not authenticate.
+              '';
+            };
+          };
+        }
       );
       default = { };
       example = literalExpression ''
@@ -224,7 +325,9 @@ in
       description = ''
         Passwords for the built-in API users wazuh and wazuh-wui, set by
         wazuh-api-users.service after the API starts. Without an entry the
-        upstream default password stays, which is the user name.
+        upstream default password stays, which is the user name. When the
+        unit fails, wazuh-apid-guard.service stops the API if a configured
+        user still authenticates with the upstream default.
       '';
     };
 
@@ -255,7 +358,8 @@ in
       wantedBy = [ "wazuh-server.target" ];
       requires = [ "wazuh-apid.service" ];
       after = [ "wazuh-apid.service" ];
-      serviceConfig = {
+      onFailure = [ "wazuh-apid-guard.service" ];
+      serviceConfig = sandbox // {
         Type = "oneshot";
         # Active after success, so the target and systemctl status show the
         # result. A restart runs the script again, and the script does
@@ -264,43 +368,25 @@ in
         User = wazuhUser;
         Group = wazuhGroup;
         TimeoutStartSec = waitSeconds + 120;
-        LoadCredential = mapAttrsToList (
-          name: user: "${credentialName name}:${toString user.passwordFile}"
-        ) cfg.api.users;
+        LoadCredential =
+          mapAttrsToList (name: user: "${credentialName name}:${toString user.passwordFile}") cfg.api.users
+          ++ mapAttrsToList (name: user: "${defaultCredentialName name}:${toString user.defaultPasswordFile}") (
+            filterAttrs (_: user: user.defaultPasswordFile != null) cfg.api.users
+          );
         ExecStart = "${script}/bin/wazuh-api-users";
+      };
+    };
 
-        # The daemons' sandbox from default.nix, for a process that writes
-        # nothing but its private /tmp: no capability, read-only root, no
-        # writable path at all.
-        CapabilityBoundingSet = [ "" ];
-        AmbientCapabilities = [ "" ];
-        NoNewPrivileges = true;
-        ProtectSystem = "strict";
-        ProtectHome = true;
-        PrivateTmp = true;
-        PrivateDevices = true;
-        ProtectClock = true;
-        ProtectControlGroups = true;
-        ProtectHostname = true;
-        ProtectKernelLogs = true;
-        ProtectKernelModules = true;
-        ProtectKernelTunables = true;
-        RestrictNamespaces = true;
-        RestrictRealtime = true;
-        RestrictSUIDSGID = true;
-        LockPersonality = true;
-        RemoveIPC = true;
-        SystemCallArchitectures = "native";
-        SystemCallFilter = [ "@system-service" ];
-        MemoryDenyWriteExecute = true;
-        UMask = "0077";
-        # AF_UNIX for the name service socket, the two INET families for
-        # the API.
-        RestrictAddressFamilies = [
-          "AF_UNIX"
-          "AF_INET"
-          "AF_INET6"
-        ];
+    # Started by OnFailure of wazuh-api-users.service. Root, because it
+    # stops a unit. It fails on purpose when it stops the API, so the
+    # condition shows in systemctl --failed.
+    systemd.services.wazuh-apid-guard = {
+      description = "Stop the Wazuh API while a built-in user has its default password";
+      after = [ "wazuh-apid.service" ];
+      serviceConfig = sandbox // {
+        Type = "oneshot";
+        TimeoutStartSec = waitSeconds + 120;
+        ExecStart = "${guard}/bin/wazuh-apid-guard";
       };
     };
   };

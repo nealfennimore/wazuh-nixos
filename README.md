@@ -548,11 +548,25 @@ The API requires 8 to 64 characters with an upper-case letter, a lower-case
 letter, a digit and a symbol. The unit `wazuh-api-users.service` runs after
 `wazuh-apid.service`. It waits for the API, then it tries each user's
 configured password. If the configured password authenticates, the unit
-changes nothing. Otherwise it authenticates with the upstream default and
+changes nothing. Otherwise it authenticates with the previous password and
 sets the new password through `PUT /security/users/{id}`. If neither
 password authenticates, the unit fails and names the user. Put the current
-password in the file, or reset the password through the API. Without
+password in `defaultPasswordFile`, or reset the password through the API. Without
 `api.users`, the upstream defaults stay.
+
+The previous password is the upstream default, the user name, unless
+`api.users.<name>.defaultPasswordFile` names a file. PID 1 reads that file
+through `LoadCredential` too. No password is an argument of a process that
+the unit starts, because every local user can read `/proc/<pid>/cmdline`.
+
+When `wazuh-api-users.service` fails, `wazuh-apid-guard.service` starts. The
+guard waits for the API and authenticates each configured user with the
+upstream default password. If one of them authenticates, the guard stops
+`wazuh-apid.service` and fails, so `systemctl --failed` shows the condition.
+A host whose first provisioning failed then has no listening API. If no
+default authenticates, the guard leaves the API up. To recover, fix the
+password files and restart `wazuh-api-users.service`. The restart starts
+the API again.
 
 With `api.tls` set, the unit verifies the API certificate and connects to
 `api.serverName`, which defaults to the host name. The host name must be a
@@ -583,7 +597,9 @@ nix build .#checks.x86_64-linux.server
 
 The check boots one VM, waits for every unit, confirms the four chroots and
 the ports, loads the ruleset with `wazuh-analysisd -t`, confirms that
-`wazuh-api-users.service` replaced the default passwords, and authenticates
+`wazuh-api-users.service` replaced the default passwords, that no password was
+a process argument (kernel audit), that `defaultPasswordFile` works, that the
+guard stops a fresh API whose provisioning failed, and authenticates
 against the API with the test PKI. The cluster is not part of the module
 yet.
 
@@ -621,7 +637,7 @@ store unless the row says otherwise. PID 1 reads each `*File` option through
 | `api.settings` | `{ }` | Extra `api.yaml` settings, merged over the generated ones. |
 | `api.users` | `{ }` | Passwords for the built-in users `wazuh` and `wazuh-wui`, set after the API starts. Without an entry the upstream default stays. |
 | `api.users.<name>.passwordFile` | none | File with the password this user must have. The API requires 8 to 64 characters with upper, lower, digit and symbol. |
-| `api.users.<name>.defaultPassword` | the user name | The password the user has before this module changes it. Used only when `passwordFile` does not authenticate. |
+| `api.users.<name>.defaultPasswordFile` | none | File with the password the user has before this module changes it. Read through `LoadCredential`. Without it the upstream default applies, which is the user name. Used only when `passwordFile` does not authenticate. |
 | `activeResponse.enable` | `true` | Runs `wazuh-execd` as `wazuh` and writes the upstream default `<command>` definitions. No `<active-response>` block is written, so no response runs until `extraConfig` adds one. |
 | `indexer` | `null` | The indexer connection. It drives the `<indexer>` block, the keystore entries and the filebeat output. `null` disables all three and vulnerability detection. |
 | `indexer.hosts` | `[ ]` | Indexer URLs, for example `https://indexer:9200`. |
