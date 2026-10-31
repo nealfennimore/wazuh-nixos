@@ -274,6 +274,9 @@ pkgs.testers.runNixOSTest {
         server.fail("grep CRITICAL /var/ossec/logs/ossec.log")
 
     with subtest("a second activation keeps host state and refreshes package files"):
+        # Requires propagates setup restarts to the consumers. Stop them
+        # before planting markers so their shutdown cannot rewrite state.
+        server.succeed("systemctl stop wazuh-server.target")
         server.succeed("echo marker-keys >> /var/ossec/etc/client.keys")
         server.succeed("echo marker-local >> /var/ossec/etc/local_internal_options.conf")
         server.succeed("echo '<!-- marker-rule -->' >> /var/ossec/ruleset/rules/0010-rules_config.xml")
@@ -283,6 +286,9 @@ pkgs.testers.runNixOSTest {
         server.succeed("grep -q marker-local /var/ossec/etc/local_internal_options.conf")
         server.fail("grep -q marker-rule /var/ossec/ruleset/rules/0010-rules_config.xml")
         assert cert == server.succeed("sha256sum /var/ossec/etc/sslmanager.cert").strip()
+        # The preservation markers are deliberately not valid daemon input.
+        server.succeed("sed -i '/^marker-keys$/d' /var/ossec/etc/client.keys")
+        server.succeed("sed -i '/^marker-local$/d' /var/ossec/etc/local_internal_options.conf")
         server.succeed("systemctl restart wazuh-server.target")
         for unit in ${builtins.toJSON (chrootDaemons ++ otherDaemons)}:
             server.wait_for_unit(f"{unit}.service")
