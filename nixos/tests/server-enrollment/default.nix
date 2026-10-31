@@ -254,6 +254,25 @@ pkgs.testers.runNixOSTest {
             server_state()
             raise
 
+    with subtest("authd rejects an enrollment with a wrong password"):
+        # The enrollments above supplied only the right password, so an
+        # authd that ignored passwords would pass them too. agent-auth can
+        # report a failure and still exit 0, so the evidence is on the
+        # server: authd logs the refusal (os_auth/auth.c) and writes no key.
+        mark = server.succeed("wc -l < /var/ossec/logs/ossec.log").strip()
+        agent_auth = agent.succeed(
+            "systemctl cat wazuh-agent-auth.service | grep -o '/nix/store/[^ ]*/bin/agent-auth' | head -n 1"
+        ).strip()
+        agent.execute(
+            f"{agent_auth} -m server -p 1515 -v ${pki.ca} -A wrong-password-agent -P not-the-password"
+        )
+        server.wait_until_succeeds(
+            f"tail -n +{int(mark) + 1} /var/ossec/logs/ossec.log | grep -q 'Invalid password provided by'",
+            timeout=60,
+        )
+        server.fail("grep -q ' wrong-password-agent ' /var/ossec/etc/client.keys")
+        server.succeed("grep -q ' example-agent ' /var/ossec/etc/client.keys")
+
     with subtest("nothing died"):
         for machine in [server, agent]:
             machine.succeed("test -z \"$(systemctl list-units --state=failed --no-legend 'wazuh-*')\"")

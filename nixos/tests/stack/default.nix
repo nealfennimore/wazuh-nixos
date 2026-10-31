@@ -421,10 +421,53 @@ pkgs.testers.runNixOSTest {
             dashboard_state()
             raise
 
+    with subtest("filebeat reconnects after an indexer restart and ships a second alert"):
+        # The alert above proves the first connection only. A filebeat that
+        # gave up on a lost connection would pass it.
+        token = "wazuh-stack-reconnect-probe"
+        query = shlex.quote(json.dumps({
+            "query": {
+                "bool": {
+                    "must": [
+                        {"match": {"agent.name": "example-agent"}},
+                        {"match_phrase": {"full_log": token}},
+                    ]
+                }
+            }
+        }))
+        try:
+            indexer.succeed("systemctl restart wazuh-indexer.service")
+            # partOf restarts the security unit with the indexer.
+            indexer.wait_until_succeeds("systemctl is-active wazuh-indexer-security.service", timeout=900)
+            indexer.wait_until_succeeds(
+                indexer_curl + " 'https://indexer:9200/_cluster/health?wait_for_status=yellow&timeout=5s'"
+                + " | jq -e '.status == \"yellow\" or .status == \"green\"'",
+                timeout=300,
+            )
+            agent.succeed(
+                "systemd-cat --identifier=sshd"
+                f" echo 'Failed password for {token} from 192.0.2.10 port 4242 ssh2'"
+            )
+            server.wait_until_succeeds(
+                f"grep -q -F '{token}' /var/ossec/logs/alerts/alerts.json", timeout=600
+            )
+            hit = json.loads(indexer.wait_until_succeeds(
+                indexer_curl + " -H 'Content-Type: application/json'"
+                + f" 'https://indexer:9200/wazuh-alerts-*/_search' -d {query}"
+                + " | jq -e 'select(.hits.total.value >= 1) | .hits.hits[0]'",
+                timeout=900,
+            ))
+            assert token in hit["_source"]["full_log"], hit["_source"]["full_log"]
+            server.succeed("systemctl is-active wazuh-filebeat.service")
+        except Exception:
+            server_state()
+            raise
+
     with subtest("nothing died"):
         for machine in [indexer, server, agent, dashboard]:
             machine.succeed("test -z \"$(systemctl list-units --state=failed --no-legend 'wazuh-*')\"")
         server.fail("grep CRITICAL /var/ossec/logs/ossec.log")
+        server.fail("grep -q 'Could not open template file' /var/ossec/logs/ossec.log")
         # The indexer connector logs this when the keystore is empty and it
         # falls back to admin:admin.
         server.fail("grep -q 'found in the keystore' /var/ossec/logs/ossec.log")

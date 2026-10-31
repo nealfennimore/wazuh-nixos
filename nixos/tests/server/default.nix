@@ -175,7 +175,14 @@ pkgs.testers.runNixOSTest {
         server.succeed("test -s /var/ossec/ruleset/rules/0010-rules_config.xml")
         server.succeed("grep -q '<port>1514</port>' /var/ossec/etc/ossec.conf")
         server.succeed("grep -q '<use_password>yes</use_password>' /var/ossec/etc/ossec.conf")
-        server.succeed("grep -q '<enabled>no</enabled>' /var/ossec/etc/ossec.conf")
+        # Without an indexer, both blocks that default to enabled are off.
+        # Scope the match to each block: any disabled block satisfies a
+        # file-wide grep.
+        for block in ["vulnerability-detection", "indexer"]:
+            server.succeed(
+                f"sed -n '/<{block}>/,/<.{block}>/p' /var/ossec/etc/ossec.conf"
+                + " | grep -q '<enabled>no</enabled>'"
+            )
         # Active response on by default: the upstream command definitions,
         # no bound response, and the response programs linked under a
         # sticky directory that execd can lock in.

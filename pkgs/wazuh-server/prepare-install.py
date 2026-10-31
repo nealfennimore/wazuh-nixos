@@ -22,6 +22,14 @@ replace_once(Path('src/Makefile'), '--disable-new-dtags" CPPFLAGS="',
              '--disable-new-dtags ${CPYTHON_NIX_LDFLAGS}" CPPFLAGS="')
 # TLS material must be supplied at runtime, never generated in a derivation.
 replace_once(Path('src/init/inst-functions.sh'), '\n    GenerateAuthCert\n', '\n    # Runtime TLS is supplied by the NixOS module.\n')
+# InstallServer creates templates/ with mode 0440 and then installs the index
+# templates into it. Root ignores the missing search bit. The unprivileged
+# builder does not, so every install into it failed silently. wazuh-modulesd
+# opens these files when vulnerability detection or the inventory harvester
+# starts with an indexer.
+replace_once(Path('src/init/inst-functions.sh'),
+             '${INSTALL} -d -m 0440 -o root -g ${WAZUH_GROUP} ${INSTALLDIR}/templates\n',
+             '${INSTALL} -d -m 0750 -o root -g ${WAZUH_GROUP} ${INSTALLDIR}/templates\n')
 # install.sh is not fail-fast. make wpython installs the interpreter, the pip
 # requirements and the wazuh and api packages. A failed step must stop the
 # build with its error at the end of the log, not leave a tree without them.

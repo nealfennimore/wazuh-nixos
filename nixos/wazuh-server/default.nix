@@ -17,7 +17,7 @@
 # internal_options.conf are copied from the package on every activation, and
 # ossec.conf is installed as a file rather than linked. Trees that only the
 # non-chrooting processes use (bin, lib, wodles, framework, api/scripts,
-# agentless, integrations) stay store links, as in the agent module.
+# agentless, integrations, templates) stay store links, as in the agent module.
 #
 # Identity. The daemons run as the wazuh user from the start. The privsep
 # patch in pkgs/patches makes their own setuid/setgid calls no-ops, and the
@@ -110,6 +110,7 @@ let
     "framework"
     "agentless"
     "integrations"
+    "templates"
   ];
 
   # Package trees that a chrooting daemon reads. Real copies, refreshed on

@@ -100,6 +100,11 @@ agent.overrideAttrs (old: {
     for daemon in analysisd remoted monitord db authd modulesd logcollector syscheckd execd keystore; do
       test -x "$out/bin/wazuh-$daemon"
     done
+    # Every index template that InstallServer names must exist.
+    grep -o '[$]{INSTALLDIR}/templates/[^ ]*[.]json' src/init/inst-functions.sh \
+      | sed "s|[$]{INSTALLDIR}|$out|" | sort -u > templates.list
+    test "$(wc -l < templates.list)" -ge 2
+    while IFS= read -r template; do test -s "$template"; done < templates.list
     for response in firewall-drop route-null wazuh-slack host-deny disable-account; do
       test -f "$out/active-response/bin/$response"
     done
