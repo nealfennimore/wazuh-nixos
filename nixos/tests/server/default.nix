@@ -276,7 +276,10 @@ pkgs.testers.runNixOSTest {
     with subtest("a second activation keeps host state and refreshes package files"):
         # Requires propagates setup restarts to the consumers. Stop them
         # before planting markers so their shutdown cannot rewrite state.
-        server.succeed("systemctl stop wazuh-server.target")
+        units = ${builtins.toJSON (chrootDaemons ++ otherDaemons)}
+        # Stopping the target alone does not wait for propagated stop jobs.
+        server.succeed("systemctl stop wazuh-server.target wazuh-api-users.service "
+                       + " ".join(f"{unit}.service" for unit in units))
         server.succeed("echo marker-keys >> /var/ossec/etc/client.keys")
         server.succeed("echo marker-local >> /var/ossec/etc/local_internal_options.conf")
         server.succeed("echo '<!-- marker-rule -->' >> /var/ossec/ruleset/rules/0010-rules_config.xml")
