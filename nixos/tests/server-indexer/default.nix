@@ -183,7 +183,8 @@ pkgs.testers.runNixOSTest {
         indexer.succeed(curl + " -X DELETE 'https://indexer:9200/wazuh-states-vulnerabilities-*'")
         indexer.fail(states + " | grep -q .")
         server.succeed(
-            "cd /var/ossec && bin/wazuh-keystore -f indexer -k password -v Wrong-password-0"
+            # Without WAZUH_HOME the tool resolves its home from the store path.
+            "cd /var/ossec && WAZUH_HOME=/var/ossec bin/wazuh-keystore -f indexer -k password -v Wrong-password-0"
             + " && chown -R wazuh:wazuh queue/keystore"
         )
         mark = server.succeed("wc -l < /var/ossec/logs/ossec.log").strip()

@@ -352,7 +352,9 @@ pkgs.testers.runNixOSTest {
         server.fail("systemctl start wazuh-api-users.service")
         server.succeed("systemctl is-failed wazuh-api-users.service")
         server.wait_until_fails("systemctl is-active wazuh-apid.service", timeout=1500)
-        server.succeed("systemctl is-failed wazuh-apid-guard.service")
+        # The guard exits after its stop job for the API returns, so the
+        # API can be inactive while the guard is still running.
+        server.wait_until_succeeds("systemctl is-failed wazuh-apid-guard.service", timeout=60)
         server.succeed("journalctl -u wazuh-apid-guard.service | grep -q 'wazuh: the upstream default password still authenticates'")
         server.succeed("journalctl -u wazuh-apid-guard.service | grep -q 'stopping wazuh-apid.service'")
         server.fail("ss -ltn | grep -q ':55000 '")

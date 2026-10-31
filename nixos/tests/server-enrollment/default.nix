@@ -264,7 +264,9 @@ pkgs.testers.runNixOSTest {
             "systemctl cat wazuh-agent-auth.service | grep -o '/nix/store/[^ ]*/bin/agent-auth' | head -n 1"
         ).strip()
         agent.execute(
-            f"{agent_auth} -m server -p 1515 -v ${pki.ca} -A wrong-password-agent -P not-the-password"
+            # The unit runs it from the home with WAZUH_HOME set.
+            f"cd /var/ossec && WAZUH_HOME=/var/ossec {agent_auth} -m server -p 1515 -v ${pki.ca}"
+            " -A wrong-password-agent -P not-the-password"
         )
         server.wait_until_succeeds(
             f"tail -n +{int(mark) + 1} /var/ossec/logs/ossec.log | grep -q 'Invalid password provided by'",
