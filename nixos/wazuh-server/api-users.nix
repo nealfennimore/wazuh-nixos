@@ -201,7 +201,17 @@ let
             fi
             return 0
           fi
+          if [ "$(cat "$codefile")" != 401 ]; then
+            echo "$name: no clear answer for the configured password (HTTP status $(cat "$codefile"), attempt $attempt of 5)" >&2
+            sleep 5
+            continue
+          fi
           if ! token=$(authenticate "$name" "$default"); then
+            if [ "$(cat "$codefile")" != 401 ]; then
+              echo "$name: no clear answer for the previous password (HTTP status $(cat "$codefile"), attempt $attempt of 5)" >&2
+              sleep 5
+              continue
+            fi
             echo "$name: neither the configured password nor the previous password authenticates (last HTTP status $(cat "$codefile")). The password was changed outside this unit. Put the current password in defaultPasswordFile, or reset it through the API." >&2
             exit 1
           fi
@@ -255,8 +265,7 @@ let
       # probe NAME: 0 when the upstream default authenticates, 1 when the
       # API refuses it, 2 when three attempts got no clear answer.
       probe() {
-        local attempt
-        for attempt in 1 2 3; do
+        for _ in 1 2 3; do
           if authenticate "$1" "$1" > /dev/null; then
             return 0
           fi
