@@ -174,9 +174,14 @@ let
       # FILE holds the password the user must have. DEFAULTFILE holds the
       # password the user has now. Without it, the upstream default applies,
       # which is the user name.
+      #
+      # A failed PUT is not a failed change: under load the API answers
+      # "Timeout executing API request" (error 3021) and applies the new
+      # password anyway. So each attempt starts by authenticating with the
+      # wanted password, and the loop retries a few times before it fails.
       set_password() {
         local name=$1 file=$2 defaultfile=''${3:-}
-        local wanted default token id response
+        local wanted default token id response attempt
         wanted=$(cat "$file")
         if [ -z "$wanted" ]; then
           echo "$name: the password file is empty" >&2
@@ -187,32 +192,42 @@ let
         else
           default=$name
         fi
-        if authenticate "$name" "$wanted" > /dev/null; then
-          echo "$name: the password is current"
-          return 0
-        fi
-        if ! token=$(authenticate "$name" "$default"); then
-          echo "$name: neither the configured password nor the previous password authenticates (last HTTP status $(cat "$codefile")). The password was changed outside this unit. Put the current password in defaultPasswordFile, or reset it through the API." >&2
-          exit 1
-        fi
-        response=$(api "$token" GET /security/users)
-        if ! id=$(printf '%s' "$response" \
-          | jq -er --arg n "$name" '.data.affected_items[] | select(.username == $n) | .id'); then
-          echo "$name: not found in GET /security/users: $response" >&2
-          exit 1
-        fi
-        # The password goes to jq on stdin, never as an argument.
-        printf '%s' "$wanted" | jq -Rs '{password: .}' > "$bodyfile"
-        response=$(api "$token" PUT "/security/users/$id" "$bodyfile")
-        if ! printf '%s' "$response" | jq -e '.error == 0 and .data.total_affected_items == 1' > /dev/null; then
-          echo "$name: PUT /security/users/$id failed: $response" >&2
-          exit 1
-        fi
-        if ! authenticate "$name" "$wanted" > /dev/null; then
-          echo "$name: the API accepted the new password but does not authenticate with it (HTTP status $(cat "$codefile"))" >&2
-          exit 1
-        fi
-        echo "$name: password set (user id $id)"
+        for attempt in 1 2 3 4 5; do
+          if authenticate "$name" "$wanted" > /dev/null; then
+            if [ "$attempt" = 1 ]; then
+              echo "$name: the password is current"
+            else
+              echo "$name: password set (confirmed on attempt $attempt)"
+            fi
+            return 0
+          fi
+          if ! token=$(authenticate "$name" "$default"); then
+            echo "$name: neither the configured password nor the previous password authenticates (last HTTP status $(cat "$codefile")). The password was changed outside this unit. Put the current password in defaultPasswordFile, or reset it through the API." >&2
+            exit 1
+          fi
+          response=$(api "$token" GET /security/users)
+          if ! id=$(printf '%s' "$response" \
+            | jq -er --arg n "$name" '.data.affected_items[] | select(.username == $n) | .id'); then
+            echo "$name: not found in GET /security/users (attempt $attempt of 5): $response" >&2
+            sleep 5
+            continue
+          fi
+          # The password goes to jq on stdin, never as an argument.
+          printf '%s' "$wanted" | jq -Rs '{password: .}' > "$bodyfile"
+          response=$(api "$token" PUT "/security/users/$id" "$bodyfile")
+          if printf '%s' "$response" | jq -e '.error == 0 and .data.total_affected_items == 1' > /dev/null; then
+            if authenticate "$name" "$wanted" > /dev/null; then
+              echo "$name: password set (user id $id)"
+              return 0
+            fi
+            echo "$name: the API accepted the new password but does not authenticate with it (HTTP status $(cat "$codefile"))" >&2
+            exit 1
+          fi
+          echo "$name: PUT /security/users/$id failed (attempt $attempt of 5): $response" >&2
+          sleep 5
+        done
+        echo "$name: the password is still not set after 5 attempts" >&2
+        exit 1
       }
 
       ${concatStringsSep "\n" (
@@ -237,14 +252,39 @@ let
     text = ''
       ${prelude}
 
+      # probe NAME: 0 when the upstream default authenticates, 1 when the
+      # API refuses it, 2 when three attempts got no clear answer.
+      probe() {
+        local attempt
+        for attempt in 1 2 3; do
+          if authenticate "$1" "$1" > /dev/null; then
+            return 0
+          fi
+          if [ "$(cat "$codefile")" = 401 ]; then
+            return 1
+          fi
+          sleep 5
+        done
+        return 2
+      }
+
       live=0
       for name in ${concatMapStringsSep " " escapeShellArg (attrNames cfg.api.users)}; do
-        if authenticate "$name" "$name" > /dev/null; then
-          echo "$name: the upstream default password still authenticates"
-          live=1
-        else
-          echo "$name: the upstream default password does not authenticate (HTTP status $(cat "$codefile"))"
-        fi
+        rc=0
+        probe "$name" || rc=$?
+        case $rc in
+          0)
+            echo "$name: the upstream default password still authenticates"
+            live=1
+            ;;
+          1)
+            echo "$name: the upstream default password does not authenticate (HTTP status 401)"
+            ;;
+          *)
+            echo "$name: no clear answer for the upstream default password (last HTTP status $(cat "$codefile")); treating it as live"
+            live=1
+            ;;
+        esac
       done
       if [ "$live" = 1 ]; then
         echo "stopping wazuh-apid.service: wazuh-api-users.service failed and a built-in user still has its upstream default password. Fix the password files, then restart wazuh-api-users.service." >&2
