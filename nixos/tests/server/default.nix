@@ -112,6 +112,32 @@ pkgs.testers.runNixOSTest {
   };
 
   testScript = ''
+    with subtest("failed setup blocks consumers with existing state and recovers"):
+        recovery.start()
+        recovery.wait_for_unit("multi-user.target")
+        consumers = ["wazuh-analysisd", "wazuh-apid", "wazuh-filebeat"]
+        for unit in consumers:
+            recovery.wait_for_unit(f"{unit}.service")
+        recovery.succeed("test -s /var/ossec/etc/ossec.conf")
+        recovery.succeed("test -s /var/ossec/etc/authd.pass")
+        recovery.succeed("echo retained-state > /var/ossec/var/setup-recovery-marker")
+        # Only setup needs this source; retain the copied secret and config.
+        recovery.succeed("mv /run/secrets/wazuh-authd-pass /run/secrets/wazuh-authd-pass.saved")
+        recovery.execute("systemctl restart wazuh-server.target")
+        recovery.wait_until_succeeds("systemctl is-failed wazuh-server-setup.service")
+        for unit in consumers:
+            state = recovery.succeed(f"systemctl show -p ActiveState --value {unit}.service").strip()
+            assert state == "inactive", f"{unit} started after failed setup: {state}"
+        recovery.succeed("grep -q retained-state /var/ossec/var/setup-recovery-marker")
+        recovery.succeed("mv /run/secrets/wazuh-authd-pass.saved /run/secrets/wazuh-authd-pass")
+        recovery.succeed("systemctl reset-failed")
+        recovery.succeed("systemctl restart wazuh-server.target")
+        for unit in consumers:
+            recovery.wait_for_unit(f"{unit}.service")
+        recovery.succeed("test $(systemctl show -p Result --value wazuh-server-setup.service) = success")
+        recovery.succeed("grep -q retained-state /var/ossec/var/setup-recovery-marker")
+        recovery.shutdown()
+
     server.start()
     server.wait_for_unit("multi-user.target")
 
@@ -258,31 +284,5 @@ pkgs.testers.runNixOSTest {
         for unit in ${builtins.toJSON (chrootDaemons ++ otherDaemons)}:
             server.wait_for_unit(f"{unit}.service")
 
-    with subtest("failed setup blocks consumers with existing state and recovers"):
-        # Run the VMs sequentially to keep memory demand low.
-        server.shutdown()
-        recovery.start()
-        recovery.wait_for_unit("multi-user.target")
-        consumers = ["wazuh-analysisd", "wazuh-apid", "wazuh-filebeat"]
-        for unit in consumers:
-            recovery.wait_for_unit(f"{unit}.service")
-        recovery.succeed("test -s /var/ossec/etc/ossec.conf")
-        recovery.succeed("test -s /var/ossec/etc/authd.pass")
-        recovery.succeed("echo retained-state > /var/ossec/var/setup-recovery-marker")
-        # Only setup needs this source; retain the copied secret and config.
-        recovery.succeed("mv /run/secrets/wazuh-authd-pass /run/secrets/wazuh-authd-pass.saved")
-        recovery.execute("systemctl restart wazuh-server.target")
-        recovery.succeed("systemctl is-failed wazuh-server-setup.service")
-        for unit in consumers:
-            state = recovery.succeed(f"systemctl show -p ActiveState --value {unit}.service").strip()
-            assert state == "inactive", f"{unit} started after failed setup: {state}"
-        recovery.succeed("grep -q retained-state /var/ossec/var/setup-recovery-marker")
-        recovery.succeed("mv /run/secrets/wazuh-authd-pass.saved /run/secrets/wazuh-authd-pass")
-        recovery.succeed("systemctl reset-failed")
-        recovery.succeed("systemctl restart wazuh-server.target")
-        for unit in consumers:
-            recovery.wait_for_unit(f"{unit}.service")
-        recovery.succeed("test $(systemctl show -p Result --value wazuh-server-setup.service) = success")
-        recovery.succeed("grep -q retained-state /var/ossec/var/setup-recovery-marker")
   '';
 }
