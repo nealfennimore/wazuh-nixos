@@ -36,6 +36,11 @@ let
 
 
     class Hook(BaseHTTPRequestHandler):
+        # The request line names the secret path. The journal check below
+        # must see only what the server under test logs.
+        def log_message(self, *args):
+            pass
+
         def do_POST(self):
             body = self.rfile.read(int(self.headers["Content-Length"]))
             with open("/var/lib/hook/requests", "ab") as f:

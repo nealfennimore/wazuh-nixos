@@ -28,7 +28,10 @@ let
     ;
 
   yesNo = b: if b then "yes" else "no";
-  element = name: value: optionalString (value != null) "  <${name}>${toString value}</${name}>\n";
+  # xml.nix refuses text that OS_XML cannot hold, such as "<" in a public
+  # hook URL or an organization name.
+  xml = import ./xml.nix { inherit lib; };
+  element = name: value: optionalString (value != null) "  ${xml.element name value}";
   token = id: "@WAZUH_SECRET_${id}@";
 
   listener =
