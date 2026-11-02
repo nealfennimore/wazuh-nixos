@@ -696,6 +696,11 @@ example below keeps the agent listener and adds a syslog listener on
 `CAP_NET_BIND_SERVICE`. With `openFirewall`, the module opens each listener
 port for its protocols.
 
+A syslog listener binds IPv4 unless its `ipv6` is set. Point each syslog
+sender at the IPv4 address of the server. If a sender resolves the server
+name to an IPv6 address first, its messages go to a port with no listener.
+UDP reports no error for that, so the messages are lost without a warning.
+
 ```nix
 services.wazuh-server = {
   remote.listeners = [
