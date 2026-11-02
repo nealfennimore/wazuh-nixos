@@ -232,7 +232,13 @@ let
       rm ${stateDir}
     fi
     install -d -m 0750 -o root -g ${wazuhGroup} ${stateDir}
-    install -d -m 0750 -o root -g ${wazuhGroup} ${stateDir}/etc
+    # Normalize the old store-linked etc layout before installing its
+    # package-owned rootcheck subtree. Keep authd's final directory mode
+    # throughout restarts rather than temporarily dropping group write.
+    if [ -L ${stateDir}/etc ]; then
+      rm ${stateDir}/etc
+    fi
+    install -d -m 1770 -o root -g ${wazuhGroup} ${stateDir}/etc
 
     ${concatMapStringsSep "\n" (dir: ''
       rm -rf ${stateDir}/${dir}
@@ -333,10 +339,6 @@ let
     # etc: sticky and root-owned. authd creates client.keys in it, and the
     # host-owned subtrees belong to wazuh because the API edits rules, lists
     # and decoders and remoted writes the merged group configuration.
-    if [ -L ${stateDir}/etc ]; then
-      rm ${stateDir}/etc
-    fi
-    install -d -m 1770 -o root -g ${wazuhGroup} ${stateDir}/etc
     ${concatMapStringsSep "\n" (dir: ''
       if [ -L ${stateDir}/etc/${dir} ]; then
         rm ${stateDir}/etc/${dir}
