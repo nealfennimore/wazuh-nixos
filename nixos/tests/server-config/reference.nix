@@ -33,6 +33,15 @@ pkgs.testers.runNixOSTest {
         allowHigherVersions = false;
       }];
       settings = {
+        labels.label = { _attributes.key = "reference.environment"; _text = "test"; };
+        agent-upgrade = { chunk_size = 16384; max_threads = 2; };
+        fluent-forward = {
+          enabled = false;
+          socket_path = "/var/ossec/queue/sockets/fluent-reference";
+          tag = "reference";
+          address = "127.0.0.1";
+          port = 24224;
+        };
         socket = { name = "reference"; location = "/var/ossec/queue/sockets/reference"; mode = "udp"; };
         localfile = [
           {
