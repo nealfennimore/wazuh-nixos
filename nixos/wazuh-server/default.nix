@@ -265,16 +265,21 @@ let
       ln -s "$entry" ${stateDir}/active-response/bin/"$(basename "$entry")"
     done
 
-    # A fresh copy beside the old one, then a rename, so a daemon that
-    # starts during activation never sees a half-copied ruleset.
-    ${concatMapStringsSep "\n" (dir: ''
-      rm -rf ${stateDir}/${dir}.new
-      cp -R --no-preserve=ownership,mode ${pkg}/${dir} ${stateDir}/${dir}.new
-      chown -R root:${wazuhGroup} ${stateDir}/${dir}.new
-      find ${stateDir}/${dir}.new -type d -exec chmod 0750 {} +
-      find ${stateDir}/${dir}.new -type f -exec chmod 0640 {} +
+    # A fresh copy, then a rename, so a daemon that starts during activation
+    # never sees a half-copied tree. The staging name lives directly under
+    # ${stateDir}, which only root can write. etc is 1770, so a staging name
+    # inside it could be planted by the wazuh group between the rm and the
+    # cp, and cp -R would follow a planted symlink. mv -T replaces a planted
+    # symlink instead of following it and fails on a planted directory.
+    ${concatMapStringsSep "\n" (dir:
+      let staging = "${stateDir}/.${replaceStrings [ "/" ] [ "-" ] dir}.new"; in ''
+      rm -rf ${staging}
+      cp -R --no-preserve=ownership,mode ${pkg}/${dir} ${staging}
+      chown -R root:${wazuhGroup} ${staging}
+      find ${staging} -type d -exec chmod 0750 {} +
+      find ${staging} -type f -exec chmod 0640 {} +
       rm -rf ${stateDir}/${dir}
-      mv ${stateDir}/${dir}.new ${stateDir}/${dir}
+      mv -T ${staging} ${stateDir}/${dir}
     '') copiedPackageDirs}
 
     # integrations: a real copy, not a store link. The packaged scripts find
