@@ -597,6 +597,8 @@ in
   imports = [
     # api.users and wazuh-api-users.service.
     ./api-users.nix
+    # remote.listeners, integrations and github.
+    ./runtime.nix
     # Alert shipping. It reads services.wazuh-server.indexer and declares
     # services.wazuh-server.filebeat; the arguments are the static values
     # its unit shares with the daemons.

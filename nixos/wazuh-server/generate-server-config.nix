@@ -16,6 +16,9 @@ let
   inherit (pkgs) lib;
   inherit (lib) concatMapStrings optionalString;
 
+  # <remote>, <integration> and <github>, from the options in runtime.nix.
+  runtime = import ./runtime-config.nix { inherit cfg lib; };
+
   yesNo = b: if b then "yes" else "no";
 
   global = ''
@@ -42,16 +45,6 @@ let
     <logging>
       <log_format>plain</log_format>
     </logging>
-  '';
-
-  remote = ''
-    <remote>
-      <connection>secure</connection>
-      <port>${toString cfg.remote.port}</port>
-      <protocol>tcp</protocol>
-      <ipv6>${yesNo cfg.listenIPv6}</ipv6>
-      <queue_size>131072</queue_size>
-    </remote>
   '';
 
   # The vulnerability scanner reads its feed into the indexer. Without an
@@ -231,7 +224,7 @@ pkgs.writeText "ossec.conf" ''
   ${global}
   ${alerts}
   ${logging}
-  ${remote}
+  ${runtime.remote}
   ${vulnerabilityDetection}
   ${indexer}
   ${activeResponse}
@@ -239,6 +232,8 @@ pkgs.writeText "ossec.conf" ''
   ${ruleset}
   ${ruleTest}
   ${auth}
+  ${runtime.integrations}
+  ${runtime.github}
   ${cfg.extraConfig}
   </ossec_config>
 ''
