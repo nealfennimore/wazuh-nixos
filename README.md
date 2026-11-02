@@ -158,6 +158,7 @@ modules and fails when an option is missing from its table.
 | `activeResponse.capability.host-deny.enable` | `false` | Append the offending address to `/etc/hosts.deny`. Needs that file writable by `wazuh`. |
 | `activeResponse.capability.firewalld-drop.enable` | `services.firewalld.enable` | Add the offending address to the firewalld drop list through a polkit rule. |
 | `activeResponse.capability.disable-account.enable` | `false` | Lock the offending account with `passwd -l`. Runs `wazuh-execd` as root. |
+| `settings` | `{ }` | Structured XML sections merged over generated defaults; lists replace repeated elements. See the structured configuration example below. |
 | `extraConfig` | `""` | XML appended to the generated `ossec.conf`. |
 | `config` | `null` | The complete `ossec.conf`. Replaces the generated file. |
 | `path` | see module | Packages on the PATH of the daemons. |
@@ -652,6 +653,7 @@ store unless the row says otherwise. PID 1 reads each `*File` option through
 | `filebeat.settings` | `{ }` | Extra `filebeat.yml` settings, merged over the generated ones. Dotted keys are accepted. |
 | `logAll` | `false` | Archives every event, not only alerts, under `logs/archives`. |
 | `alertLevel` | `3` | The minimum rule level that produces an alert. |
+| `settings` | `{ }` | Structured XML sections merged over generated defaults; lists replace repeated elements. See the structured configuration example below. |
 | `extraConfig` | `""` | XML appended inside `<ossec_config>`. |
 | `path` | `[ ]` | Packages added to the daemons' PATH, for command readers and integrations. |
 
@@ -1115,3 +1117,66 @@ systemd.services.wazuh-syscheckd.serviceConfig.ProtectHome = false;
   it. The read-only code trees raise the cost of that path. They do not
   remove it. Weigh this in the same place the `disable-account` warning
   points: what execd holds is what a compromise gains.
+
+### Structured server configuration
+
+`services.wazuh-server.settings` uses upstream XML element names. Attribute
+sets create nested elements, lists repeat elements in order, booleans become
+`yes`/`no`, and `null` omits an element. `_attributes` supplies attributes;
+`_text` supplies the text of an attributed element. For example:
+
+```nix
+services.wazuh-server.settings = {
+  global.agents_disconnection_time = "10m";
+  global.white_list = [ "127.0.0.1" "^localhost.localdomain$" "127.0.0.53" ];
+  syscheck.auto_ignore = {
+    _attributes = { frequency = 10; timeframe = 3600; };
+    _text = false;
+  };
+  localfile = [{ log_format = "journald"; location = "journald"; }];
+};
+users.users.wazuh.extraGroups = [ "systemd-journal" ];
+```
+
+Settings merge recursively over generated defaults, so the example replaces
+the disconnection timeout. Lists replace the entire default list: include
+`/var/ossec/logs/active-responses.log` yourself when replacing `localfile`.
+`settings` takes precedence over `logAll` and `alertLevel` in the XML; prefer
+those dedicated options unless independent archive formats are needed.
+`extraConfig` remains raw XML appended after the structured configuration.
+
+Supported sections are `global`, `alerts`, `logging`, `rootcheck`, `syscheck`,
+`sca`, `wodle`, `localfile`, `ruleset`, `rule_test`, `command`,
+`active-response`, `vulnerability-detection`, and a disabled `cluster`.
+Remote listeners, enrollment, indexer connections, integrations and GitHub
+use their dedicated options because those also configure services and
+credentials. Email and clustering cannot be enabled: their daemons are not
+provided. Vulnerability detection requires an indexer.
+
+Wazuh's XML reader does not decode entities. The renderer therefore preserves
+literal ampersands instead of changing their meaning to `&amp;`, rejects `<`
+and trailing backslashes in text, and rejects quotes/angle brackets/newlines
+in attributes. This follows Wazuh's reader, so output containing ampersands
+may not parse with a standard XML library. It validates representation, not
+all upstream section names, values, or operating-system permissions.
+
+[examples/server-parity.nix](examples/server-parity.nix) translates a manager
+configuration with two listeners, enrollment, FIM, rootcheck, SCA,
+syscollector, indexer, VirusTotal, Slack and GitHub. It adapts Debian file
+logs to journald and filesystem paths to NixOS. Command collectors run with
+`services.wazuh-server.path`; they retain the service's permissions (for
+example, unprivileged netstat cannot identify every process). The packaged
+`restart-wazuh` command is intentionally absent because systemd owns restarts.
+CIS-CAT and osquery stay disabled. Stock SCA policies target distributions
+other than NixOS, and enabling inventory does not by itself supply the
+agent module's Nix package inventory service. Configure suitable policies
+and inventory sources for the host rather than assuming Debian results.
+
+All `settings` and `extraConfig` values are public in the Nix store. Put API
+keys, tokens and webhooks in the dedicated secret-file options; provision
+the example's `/run/keys` files with your secret manager. TLS paths are
+inputs: setup copies them into Wazuh's runtime directory.
+
+`nix build .#checks.x86_64-linux.server-config` checks the merged configuration
+with the native Wazuh readers, waits for each monitoring scan to finish,
+and proves journald and command events reach the manager archive.

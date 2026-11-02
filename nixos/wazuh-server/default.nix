@@ -117,6 +117,7 @@ let
   # every activation so an upgrade replaces them.
   copiedPackageDirs = [
     "ruleset"
+    "etc/rootcheck"
   ];
 
   # Host state. Created once from the package skeleton, then left alone.
@@ -185,6 +186,7 @@ let
       rm ${stateDir}
     fi
     install -d -m 0750 -o root -g ${wazuhGroup} ${stateDir}
+    install -d -m 0750 -o root -g ${wazuhGroup} ${stateDir}/etc
 
     ${concatMapStringsSep "\n" (dir: ''
       rm -rf ${stateDir}/${dir}
@@ -595,6 +597,7 @@ let
 in
 {
   imports = [
+    ./settings.nix
     # api.users and wazuh-api-users.service.
     ./api-users.nix
     # remote.listeners, integrations and github.
