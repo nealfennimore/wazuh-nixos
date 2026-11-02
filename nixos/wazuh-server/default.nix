@@ -72,7 +72,54 @@ let
       "indexer-key" = cfg.indexer.tls.key;
       "indexer-username" = cfg.indexer.usernameFile;
       "indexer-password" = cfg.indexer.passwordFile;
-    };
+    }
+    // mapAttrs' (id: s: nameValuePair "secret-${id}" s.source) runtime.secrets;
+
+  # The listeners, integrations and GitHub module (runtime.nix). The XML is
+  # placed by generate-server-config.nix; this file runs what it needs.
+  runtime = import ./runtime-config.nix { inherit cfg lib; };
+  argvSecrets = filterAttrs (_: s: s.target == "argv") runtime.secrets;
+  configSecrets = filterAttrs (_: s: s.target == "config") runtime.secrets;
+  lowPortListeners = filter (l: l.port < 1024) cfg.remote.listeners;
+
+  # Where integration secrets live for integration-secrets.py. Readable by
+  # the wazuh group, which integratord runs as.
+  secretsDir = "${stateDir}/etc/secrets";
+
+  # integrations/<name> as the module runs it: the packaged script under the
+  # packaged interpreter, through integration-secrets.py. Upstream's wrapper
+  # (integrations/<name> in the package) runs the same interpreter and
+  # exports the same variable.
+  integrationWrapper =
+    name:
+    pkgs.writeText "wazuh-integration-${name}" ''
+      #!/bin/sh
+      OPENSSL_armcap=0
+      export OPENSSL_armcap
+      exec ${stateDir}/framework/python/bin/python3 ${./integration-secrets.py} \
+        ${secretsDir} ${stateDir}/integrations/${name}.py "$@"
+    '';
+
+  # What the setup unit accepts as a secret: one line of printable ASCII
+  # without space, "<", "$" or "\". The Wazuh XML reader does not decode
+  # entities, opens an element at "<" and expands "$name" when a <var> is
+  # defined (src/os_xml/os_xml.c, os_xml_variables.c), and integratord
+  # splits its command line on spaces. A value that any of them would change
+  # is refused, not escaped.
+  secretRule = ''
+    read_secret() {
+      local LC_ALL=C
+      local value
+      value=$(cat "$CREDENTIALS_DIRECTORY/secret-$1")
+      case "$value" in
+        "" | *[!!-~]* | *"<"* | *'$'* | *"\\"*)
+          echo "wazuh-server-setup: secret $1 must be one line of printable ASCII without space, <, \$ or \\" >&2
+          exit 1
+          ;;
+      esac
+      printf '%s' "$value"
+    }
+  '';
 
   generatedConfig = import ./generate-server-config.nix { inherit cfg pkgs credentialPaths; };
 
@@ -109,7 +156,6 @@ let
     "wodles"
     "framework"
     "agentless"
-    "integrations"
     "templates"
   ];
 
@@ -223,6 +269,28 @@ let
       mv ${stateDir}/${dir}.new ${stateDir}/${dir}
     '') copiedPackageDirs}
 
+    # integrations: a real copy, not a store link. The packaged scripts find
+    # logs/ and queue/sockets/ from dirname(dirname(realpath(__file__)))
+    # (integrations/slack.py, virustotal.py), which behind a link is the
+    # read-only store. Each program is replaced with the module's wrapper,
+    # which runs the script through integration-secrets.py.
+    rm -rf ${stateDir}/integrations.new
+    cp -R --no-preserve=ownership,mode ${pkg}/integrations ${stateDir}/integrations.new
+    chown -R root:${wazuhGroup} ${stateDir}/integrations.new
+    chmod 0750 ${stateDir}/integrations.new
+    find ${stateDir}/integrations.new -type f -exec chmod 0640 {} +
+    for script in ${stateDir}/integrations.new/*.py; do
+      [ -e "$script" ] || continue
+      name=$(basename "$script" .py)
+      rm -f ${stateDir}/integrations.new/"$name"
+    done
+    ${concatMapStringsSep "\n" (
+      name:
+      "install -m 0750 -o root -g ${wazuhGroup} ${integrationWrapper name} ${stateDir}/integrations.new/${name}"
+    ) (unique (mapAttrsToList (_: i: i.name) cfg.integrations))}
+    rm -rf ${stateDir}/integrations
+    mv ${stateDir}/integrations.new ${stateDir}/integrations
+
     # State trees. The directory inodes are mount points in the daemon
     # namespaces (ReadWritePaths), so they are created when absent and never
     # removed; deleting a mount point detaches the mount in every namespace.
@@ -305,7 +373,59 @@ let
     # bump adds keys to internal_options.conf, and a daemon that does not
     # find one exits with "(2301): Definition not found".
     install -m 0640 -o root -g ${wazuhGroup} ${pkg}/etc/internal_options.conf ${stateDir}/etc/internal_options.conf
-    install -m 0640 -o root -g ${wazuhGroup} ${generatedConfig} ${stateDir}/etc/ossec.conf
+    ${
+      if configSecrets == { } then
+        "install -m 0640 -o root -g ${wazuhGroup} ${generatedConfig} ${stateDir}/etc/ossec.conf"
+      else
+        ''
+          # The generated file holds @WAZUH_SECRET_<id>@ tokens for the
+          # secrets that a daemon reads from ossec.conf itself. The values
+          # go into the installed copy only. index() and substr() treat the
+          # value as text, so no character in it is special.
+          ${secretRule}
+          install -m 0600 -o root -g root ${generatedConfig} ${stateDir}/etc/ossec.conf.new
+          ${concatStringsSep "\n" (
+            mapAttrsToList (id: _: ''
+              value=$(read_secret ${id})
+              TOKEN=${escapeShellArg (runtime.token id)} VALUE="$value" awk '
+                BEGIN { t = ENVIRON["TOKEN"]; v = ENVIRON["VALUE"] }
+                {
+                  out = ""
+                  while ((i = index($0, t)) > 0) {
+                    out = out substr($0, 1, i - 1) v
+                    $0 = substr($0, i + length(t))
+                  }
+                  print out $0
+                }
+              ' ${stateDir}/etc/ossec.conf.new > ${stateDir}/etc/ossec.conf.tmp
+              mv ${stateDir}/etc/ossec.conf.tmp ${stateDir}/etc/ossec.conf.new
+              if grep -qF ${escapeShellArg (runtime.token id)} ${stateDir}/etc/ossec.conf.new; then
+                echo "wazuh-server-setup: token for ${id} left in ossec.conf" >&2
+                exit 1
+              fi
+            '') configSecrets
+          )}
+          chown root:${wazuhGroup} ${stateDir}/etc/ossec.conf.new
+          chmod 0640 ${stateDir}/etc/ossec.conf.new
+          mv ${stateDir}/etc/ossec.conf.new ${stateDir}/etc/ossec.conf
+        ''
+    }
+
+    # Integration secrets, for integration-secrets.py. Rewritten on every
+    # activation, so a removed integration loses its file.
+    rm -rf ${secretsDir}
+    ${optionalString (argvSecrets != { }) ''
+      ${optionalString (configSecrets == { }) secretRule}
+      install -d -m 0750 -o root -g ${wazuhGroup} ${secretsDir}
+      ${concatStringsSep "\n" (
+        mapAttrsToList (id: _: ''
+          value=$(read_secret ${id})
+          (umask 0077; printf '%s\n' "$value" > ${secretsDir}/${id})
+          chown root:${wazuhGroup} ${secretsDir}/${id}
+          chmod 0640 ${secretsDir}/${id}
+        '') argvSecrets
+      )}
+    ''}
 
     # glibc reads /etc/localtime once, relative to the root of the process.
     # Inside the chroot that is this file, which is why the upstream
@@ -388,9 +508,9 @@ let
   '';
 
   # The daemons, in the order src/init/wazuh-server.sh starts them, minus
-  # the ones this revision does not run: maild, clusterd, agentlessd,
-  # integratord and csyslogd (all optional upstream). execd is conditional
-  # on activeResponse.enable, below.
+  # the ones this revision does not run: maild, clusterd, agentlessd and
+  # csyslogd (all optional upstream). execd is conditional on
+  # activeResponse.enable and integratord on integrations, below.
   #
   # chroot: the daemon calls chroot(home) after reading its configuration.
   # writable: state outside the four shared trees that this daemon writes.
@@ -414,13 +534,21 @@ let
     # remoted writes etc/shared/<group>/merged.mg, the configuration it
     # pushes to agents, and reads etc/client.keys that authd writes.
     #
-    # Its main process forks one child per connection handler and then
-    # returns 0 (src/remoted/main.c, the loop over logr.conn), with or
-    # without -f. Under Type=exec that return is a clean exit and the unit
-    # goes inactive with the child still listening, until systemd stops the
-    # group. Type=forking waits for the parent to exit and tracks the one
-    # surviving child. The generated configuration has a single <remote>
-    # block, so there is exactly one child to find.
+    # Its main process forks one child per <remote> block and then returns
+    # 0 (src/remoted/main.c, the loop over logr.conn), with or without -f.
+    # Under Type=exec that return is a clean exit and the unit goes inactive
+    # with the children still listening, until systemd stops the group.
+    # Type=forking waits for the parent to exit. With one listener systemd
+    # tracks the one surviving child as the main process, and
+    # Restart=on-failure restarts it. With more than one there is no single
+    # main process: GuessMainPID is off, the unit stays active while any
+    # child runs, and Restart=always restarts it when the last one exits.
+    # One listener that dies while another runs is not restarted, as with
+    # the upstream wazuh-control.
+    #
+    # Each child binds its port after the chroot, as wazuh
+    # (src/remoted/remoted.c, HandleRemote). A port below 1024 needs
+    # CAP_NET_BIND_SERVICE.
     wazuh-remoted = {
       chroot = true;
       forking = true;
@@ -429,6 +557,15 @@ let
         "wazuh-analysisd.service"
       ];
       writable = [ "etc/shared" ];
+      serviceConfig =
+        optionalAttrs (length cfg.remote.listeners > 1) {
+          GuessMainPID = false;
+          Restart = "always";
+        }
+        // optionalAttrs (lowPortListeners != [ ]) {
+          CapabilityBoundingSet = chrootHardening.CapabilityBoundingSet ++ [ "CAP_NET_BIND_SERVICE" ];
+          AmbientCapabilities = chrootHardening.AmbientCapabilities ++ [ "CAP_NET_BIND_SERVICE" ];
+        };
     };
     wazuh-monitord = {
       chroot = true;
@@ -482,6 +619,20 @@ let
     wazuh-execd = {
       after = [ "wazuh-db.service" ];
       writable = [ "active-response" ];
+    };
+  }
+  // optionalAttrs (cfg.integrations != { }) {
+    # integratord reads logs/alerts/alerts.json and runs
+    # integrations/<name> for each matching alert (src/os_integrator). It
+    # does not chroot. It writes the alert and options files to /tmp, which
+    # is private to the unit, and the scripts append to
+    # logs/integrations.log and send to queue/sockets/queue. The scripts are
+    # Python with requests: MemoryDenyWriteExecute is off for the same
+    # reason as on wazuh-apid, untested under that restriction. The
+    # programs reach the integration services over the network.
+    wazuh-integratord = {
+      after = [ "wazuh-analysisd.service" ];
+      serviceConfig.MemoryDenyWriteExecute = false;
     };
   };
 
@@ -590,7 +741,8 @@ let
           ExecStart = "${pkg}/bin/${name} -f";
           Restart = "on-failure";
           RestartSec = 5;
-        };
+        }
+        // (unit.serviceConfig or { });
     };
 in
 {
@@ -836,11 +988,12 @@ in
     users.groups.${wazuhGroup} = { };
 
     networking.firewall.allowedTCPPorts = mkIf cfg.openFirewall (
-      [
-        cfg.remote.port
-        cfg.api.port
-      ]
+      map (l: l.port) (filter (l: elem "tcp" l.protocol) cfg.remote.listeners)
+      ++ [ cfg.api.port ]
       ++ optional cfg.auth.enable cfg.auth.port
+    );
+    networking.firewall.allowedUDPPorts = mkIf cfg.openFirewall (
+      map (l: l.port) (filter (l: elem "udp" l.protocol) cfg.remote.listeners)
     );
 
     systemd.tmpfiles.rules = [
@@ -883,6 +1036,8 @@ in
                 runtimeInputs = [
                   pkgs.coreutils
                   pkgs.findutils
+                  pkgs.gawk
+                  pkgs.gnugrep
                 ];
                 text = preStart;
               };

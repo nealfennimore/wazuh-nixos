@@ -618,7 +618,16 @@ store unless the row says otherwise. PID 1 reads each `*File` option through
 | `enable` | `false` | Runs the manager daemons and the API. |
 | `package` | `pkgs.wazuh-server` | The server package. |
 | `openFirewall` | `false` | Opens the agent, enrollment and API ports in the firewall. |
-| `remote.port` | `1514` | The TCP port that `remoted` listens on for agents. |
+| `remote.port` | `1514` | The TCP port of the default secure listener. Set `remote.port` or `remote.listeners`, not both. |
+| `remote.listeners` | one secure TCP listener on `remote.port` | The `remoted` listeners, one `<remote>` block each. At most one listener can be secure. |
+| `remote.listeners.*.connection` | none | `secure` for agents, `syslog` for syslog senders. |
+| `remote.listeners.*.port` | none | The port the listener binds. A port below 1024 gives `wazuh-remoted` `CAP_NET_BIND_SERVICE`. |
+| `remote.listeners.*.protocol` | `[ "tcp" ]` | `tcp`, `udp`, or both. Only a secure listener can use both. |
+| `remote.listeners.*.localIp` | `null` | The address the listener binds. `null` binds every address. |
+| `remote.listeners.*.ipv6` | `null` | Binds an IPv6 socket. `null` follows `listenIPv6` for a secure listener and binds IPv4 for a syslog listener. |
+| `remote.listeners.*.allowedIps` | `[ ]` | Syslog senders that `remoted` accepts, as addresses or networks. A syslog listener needs one entry at least. |
+| `remote.listeners.*.deniedIps` | `[ ]` | Syslog senders that `remoted` refuses. |
+| `remote.listeners.*.queueSize` | `null` | The message queue size of a secure listener. `null` keeps the Wazuh default. |
 | `listenIPv6` | `true` | Binds `remoted` and `authd` to a dual-stack socket. Off, both bind IPv4 only, as upstream does. |
 | `auth.enable` | `true` | Runs `wazuh-authd`, the enrollment service. |
 | `auth.port` | `1515` | The enrollment port. |
@@ -652,8 +661,94 @@ store unless the row says otherwise. PID 1 reads each `*File` option through
 | `filebeat.settings` | `{ }` | Extra `filebeat.yml` settings, merged over the generated ones. Dotted keys are accepted. |
 | `logAll` | `false` | Archives every event, not only alerts, under `logs/archives`. |
 | `alertLevel` | `3` | The minimum rule level that produces an alert. |
+| `integrations` | `{ }` | Integrations, one `<integration>` block each. A non-empty set runs `wazuh-integratord`. |
+| `integrations.<name>.name` | the attribute name | The integration program: `slack`, `virustotal`, `pagerduty`, `shuffle` or `maltiverse`. |
+| `integrations.<name>.hookUrl` | `null` | A webhook URL that is not a secret. The value goes into the Nix store. |
+| `integrations.<name>.hookUrlFile` | `null` | File with the webhook URL, one line. |
+| `integrations.<name>.apiKeyFile` | `null` | File with the API key, one line. |
+| `integrations.<name>.level` | `null` | The minimum alert level that the integration receives. |
+| `integrations.<name>.ruleIds` | `[ ]` | Rule IDs that the integration receives. Empty means every rule. |
+| `integrations.<name>.groups` | `[ ]` | Rule groups that the integration receives. Empty means every group. |
+| `integrations.<name>.eventLocation` | `null` | A regular expression for the alert location. |
+| `integrations.<name>.alertFormat` | `"json"` | The alert format. The packaged integrations read JSON only. |
+| `integrations.<name>.maxLog` | `null` | The maximum length of the log text sent to the integration. |
+| `integrations.<name>.options` | `null` | A JSON object that the integration receives as its options file. |
+| `integrations.<name>.timeout` | `null` | Seconds before a request of the integration times out. |
+| `integrations.<name>.retries` | `null` | The number of retries after a failed request. |
+| `github` | `null` | The GitHub audit-log module of `wazuh-modulesd`. `null` leaves it out. |
+| `github.apiAuth` | none | The organizations to read, one entry each. |
+| `github.apiAuth.*.orgName` | none | The GitHub organization. |
+| `github.apiAuth.*.apiTokenFile` | none | File with a token that can read the audit log of the organization, one line. |
+| `github.interval` | `"1m"` | The time between two reads of the audit log. |
+| `github.timeDelay` | `"30s"` | The delay that GitHub needs to publish an event. |
+| `github.curlMaxSize` | `"1M"` | The maximum size of one API response. |
+| `github.onlyFutureEvents` | `true` | Reads only events after the first start. `false` also reads the existing log. |
+| `github.eventType` | `"all"` | The event types to read: `all`, `git` or `web`. |
 | `extraConfig` | `""` | XML appended inside `<ossec_config>`. |
 | `path` | `[ ]` | Packages added to the daemons' PATH, for command readers and integrations. |
+
+### Receive syslog, run integrations and read GitHub
+
+`remote.listeners` replaces the single agent listener with a list. The
+example below keeps the agent listener and adds a syslog listener on
+514/udp. Port 514 is below 1024, so `wazuh-remoted` gets
+`CAP_NET_BIND_SERVICE`. With `openFirewall`, the module opens each listener
+port for its protocols.
+
+```nix
+services.wazuh-server = {
+  remote.listeners = [
+    { connection = "secure"; port = 1514; protocol = [ "tcp" ]; queueSize = 131072; }
+    { connection = "syslog"; port = 514; protocol = [ "udp" ]; allowedIps = [ "192.168.1.0/24" ]; }
+  ];
+  integrations.virustotal = { apiKeyFile = "/run/secrets/wazuh-virustotal-key"; groups = [ "syscheck" ]; };
+  integrations.slack = { hookUrlFile = "/run/secrets/wazuh-slack-hook"; level = 11; };
+  github.apiAuth = [ { orgName = "example-org"; apiTokenFile = "/run/secrets/wazuh-github-token"; } ];
+};
+```
+
+`remoted` starts one child process for each listener. With more than one
+listener, systemd has no single main process to supervise. The unit stays
+active while one child runs, and systemd restarts it when the last child
+exits. If one listener stops while another runs, systemd does not restart
+it. The upstream `wazuh-control` behaves the same way.
+
+A secret never goes into the Nix store. The generated `ossec.conf` holds a
+token such as `@WAZUH_SECRET_integration-slack-hook_url@` in place of each
+secret. `wazuh-server-setup.service` then puts each value where its reader
+needs it:
+
+- The GitHub token goes into `/var/ossec/etc/ossec.conf`, because
+  `wazuh-modulesd` reads it from there. The file is mode 0640, owner root,
+  group wazuh.
+- Each integration secret goes into `/var/ossec/etc/secrets/<id>`, mode 0640,
+  owner root, group wazuh. The token stays in `ossec.conf`.
+
+`wazuh-integratord` gives the API key and the hook URL to the integration
+program as command-line arguments. In this module, those arguments are the
+tokens. The module replaces each program under `integrations/` with a
+wrapper. The wrapper starts the packaged Python script through
+`integration-secrets.py`, which reads the secret files and replaces the
+tokens inside the Python process. So no secret is a process argument.
+
+The upstream scripts write their arguments to `logs/integrations.log` on
+every call, also without debug mode. An uncaught request error names the
+URL path on stderr, and `wazuh-integratord` copies that output to
+`ossec.log`. `integration-secrets.py` replaces each secret, and the path of a
+secret URL, with `[secret]` in these outputs.
+
+The Wazuh XML reader does not decode entities, so a secret is not escaped.
+Each secret file must hold one line of printable ASCII. The line must not
+contain a space, `<`, `$` or `\`. If a secret breaks this rule, the setup
+unit stops with an error and leaves the installed `ossec.conf` unchanged.
+
+The API can return the manager configuration. For API users without
+permission to update the configuration, it masks only `authd.pass` and
+`cluster.key` (`SENSITIVE_FIELD_PATHS` in
+`framework/wazuh/rbac/decorators.py`). It does not mask the GitHub token. So
+every API user who can read the manager configuration can read the GitHub
+token. The integration secrets are not in `ossec.conf`, so the API does not
+return them.
 
 ### Enroll an agent against the server
 

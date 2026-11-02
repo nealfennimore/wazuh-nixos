@@ -165,6 +165,10 @@
         # manager found in wazuh-alerts-4.x-*. Needs about 6 GB for the
         # two VMs.
         checks.server-indexer = import ./nixos/tests/server-indexer { inherit pkgs wazuhServerModule; };
+        # A second remoted listener (syslog on 514/udp), integratord and the
+        # Slack integration against a local webhook, and the secret handling
+        # for integrations and the GitHub module, in two VMs.
+        checks.server-runtime = import ./nixos/tests/server-runtime { inherit pkgs wazuhServerModule; };
         # filebeat OSS 7.10.2, the shipper the upstream server package
         # installs. nixpkgs filebeat7 is the licensed build and refuses the
         # indexer (GET /_license on connect).
