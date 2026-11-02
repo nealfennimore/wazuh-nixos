@@ -73,6 +73,31 @@ let
     };
 
   clusterKeyId = "cluster-key";
+  credential = name: "/var/ossec/etc/credentials/${name}";
+  # The cluster reader splits a haproxy_helper value at commas
+  # (framework/wazuh/core/configuration.py, _read_option), so
+  # excluded_nodes is one comma-separated text.
+  haproxyHelper = h: {
+    haproxy_disabled = !h.enable;
+    haproxy_address = h.address;
+    haproxy_port = h.port;
+    haproxy_protocol = h.protocol;
+    haproxy_user = h.user;
+    haproxy_password = "@WAZUH_SECRET_cluster-haproxy-password@";
+    haproxy_backend = h.backend;
+    haproxy_resolver = h.resolver;
+    haproxy_cert = if h.caFile == null then null else credential "cluster-haproxy-ca";
+    client_cert = if h.clientCertFile == null then null else credential "cluster-haproxy-client-cert";
+    client_cert_key = if h.clientKeyFile == null then null else credential "cluster-haproxy-client-key";
+    client_cert_password = if h.clientKeyPasswordFile == null then null else "@WAZUH_SECRET_cluster-haproxy-client-key-password@";
+    excluded_nodes = if h.excludedNodes == [ ] then null else concatStringsSep "," h.excludedNodes;
+    frequency = h.frequency;
+    agent_chunk_size = h.agentChunkSize;
+    agent_reconnection_time = h.agentReconnectionTime;
+    agent_reconnection_stability_time = h.agentReconnectionStabilityTime;
+    imbalance_tolerance = h.imbalanceTolerance;
+    remove_disconnected_node_after = h.removeDisconnectedNodeAfter;
+  };
   cluster =
     c:
     xml.element "cluster" {
@@ -85,6 +110,7 @@ let
       nodes.node = c.nodes;
       hidden = c.hidden;
       disabled = false;
+      haproxy_helper = if c.haproxyHelper == null then null else haproxyHelper c.haproxyHelper;
     };
 in
 {
@@ -112,11 +138,28 @@ in
   # is an extended regular expression that the whole value must match.
   # wazuh-clusterd refuses a key that is not 32 letters and digits
   # (framework/wazuh/core/cluster/cluster.py, check_cluster_config).
-  secrets = optionalAttrs (cfg.cluster != null) {
-    ${clusterKeyId} = {
-      source = cfg.cluster.keyFile;
-      target = "config";
-      pattern = "[A-Za-z0-9]{32}";
-    };
-  };
+  secrets =
+    optionalAttrs (cfg.cluster != null) {
+      ${clusterKeyId} = {
+        source = cfg.cluster.keyFile;
+        target = "config";
+        pattern = "[A-Za-z0-9]{32}";
+      };
+    }
+    // optionalAttrs (cfg.cluster != null && cfg.cluster.haproxyHelper != null) (
+      {
+        cluster-haproxy-password = {
+          source = cfg.cluster.haproxyHelper.passwordFile;
+          target = "config";
+          pattern = "[^,]+";
+        };
+      }
+      // optionalAttrs (cfg.cluster.haproxyHelper.clientKeyPasswordFile != null) {
+        cluster-haproxy-client-key-password = {
+          source = cfg.cluster.haproxyHelper.clientKeyPasswordFile;
+          target = "config";
+          pattern = "[^,]+";
+        };
+      }
+    );
 }

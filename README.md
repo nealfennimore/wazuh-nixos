@@ -735,6 +735,26 @@ store unless the row says otherwise. PID 1 reads each `*File` option through
 | `cluster.bindAddr` | `"0.0.0.0"` | The address that the master listens on. |
 | `cluster.nodes` | none | The address of the master. Workers connect to the first entry. |
 | `cluster.hidden` | `false` | Leaves the cluster information out of alerts. |
+| `cluster.haproxyHelper` | `null` | The HAProxy helper of the master, which balances agents across the nodes. |
+| `cluster.haproxyHelper.enable` | `true` | Runs the helper. `false` writes `haproxy_disabled` as `yes`. |
+| `cluster.haproxyHelper.address` | none | The address of the HAProxy Data Plane API. |
+| `cluster.haproxyHelper.port` | `5555` | The port of the Data Plane API, 1024 to 65535. |
+| `cluster.haproxyHelper.protocol` | `"http"` | `http` or `https`. `https` needs `caFile`. |
+| `cluster.haproxyHelper.user` | none | The Data Plane API user. |
+| `cluster.haproxyHelper.passwordFile` | none | File with the Data Plane API password, one line without a comma. |
+| `cluster.haproxyHelper.backend` | `"wazuh_reporting"` | The HAProxy backend that the helper manages. |
+| `cluster.haproxyHelper.resolver` | `null` | The HAProxy resolver for the backend servers. |
+| `cluster.haproxyHelper.caFile` | `null` | The CA certificate of the Data Plane API. |
+| `cluster.haproxyHelper.clientCertFile` | `null` | The client certificate. Set it together with `clientKeyFile`. |
+| `cluster.haproxyHelper.clientKeyFile` | `null` | The client key. |
+| `cluster.haproxyHelper.clientKeyPasswordFile` | `null` | File with the password of the client key, one line without a comma. |
+| `cluster.haproxyHelper.excludedNodes` | `[ ]` | Nodes that receive no agents. |
+| `cluster.haproxyHelper.frequency` | `null` | Seconds between two balance checks, 10 or more. |
+| `cluster.haproxyHelper.agentChunkSize` | `null` | Agents moved per step, 100 or more. |
+| `cluster.haproxyHelper.agentReconnectionTime` | `null` | Seconds between two reconnection steps. |
+| `cluster.haproxyHelper.agentReconnectionStabilityTime` | `null` | Seconds the cluster must be stable before agents move, 10 or more. |
+| `cluster.haproxyHelper.imbalanceTolerance` | `null` | The tolerated imbalance, a decimal above 0 and at most 1. |
+| `cluster.haproxyHelper.removeDisconnectedNodeAfter` | `null` | Minutes before a disconnected node leaves the backend. |
 | `syslogOutput` | `[ ]` | Syslog servers that receive alerts, one `<syslog_output>` block each. A non-empty list runs `wazuh-csyslogd`. |
 | `syslogOutput.*.server` | none | The address or host name of the syslog server. |
 | `syslogOutput.*.port` | `514` | The UDP port. |
@@ -894,6 +914,15 @@ services.wazuh-server.cluster = {
   nodes = [ "192.168.1.10" ];
 };
 ```
+
+`cluster.haproxyHelper` configures the HAProxy helper of the master. Its
+passwords are written into the installed `ossec.conf`, and the API does not
+mask them. The cluster reader splits a helper value at commas, so a helper
+password must not contain a comma. The CA, client certificate and key are
+installed under `etc/credentials` through `credentialFiles`. The option
+bounds follow the schema that `wazuh-clusterd` checks, so a value that the
+daemon would refuse fails at evaluation. The VM check parses a disabled
+helper. It does not run the helper against a Data Plane API.
 
 With `openFirewall`, the master opens `cluster.port`. The disabled
 `settings.cluster` block of earlier configurations still works, but it

@@ -393,7 +393,8 @@ in
               '';
             };
             port = mkOption {
-              type = types.port;
+              # check_cluster_config requires 1024 < port < 65535.
+              type = types.ints.between 1025 65534;
               default = 1516;
               description = "TCP port of the master. Workers connect to it.";
             };
@@ -412,13 +413,128 @@ in
               default = false;
               description = "Leave the cluster information out of alerts.";
             };
+            haproxyHelper = mkOption {
+              type = types.nullOr (
+                types.submodule {
+                  options = {
+                    enable = mkOption {
+                      type = types.bool;
+                      default = true;
+                      description = "Run the helper. false writes haproxy_disabled yes.";
+                    };
+                    address = mkOption {
+                      type = types.str;
+                      description = "Address of the HAProxy Data Plane API.";
+                    };
+                    # The bounds below follow HAPROXY_HELPER_SCHEMA in
+                    # framework/wazuh/core/cluster/cluster.py. clusterd
+                    # exits with error 3004 outside them.
+                    port = mkOption {
+                      type = types.ints.between 1024 65535;
+                      default = 5555;
+                      description = "Port of the Data Plane API.";
+                    };
+                    protocol = mkOption {
+                      type = types.enum [
+                        "http"
+                        "https"
+                      ];
+                      default = "http";
+                      description = "Protocol of the Data Plane API.";
+                    };
+                    user = mkOption {
+                      type = types.str;
+                      description = "Data Plane API user.";
+                    };
+                    passwordFile = mkOption {
+                      type = types.path;
+                      description = ''
+                        File with the Data Plane API password, one line
+                        without a comma: the cluster reader splits a value
+                        with a comma into a list. Read by PID 1 through
+                        LoadCredential and written into the installed
+                        ossec.conf. The API does not mask it.
+                      '';
+                    };
+                    backend = mkOption {
+                      type = types.str;
+                      default = "wazuh_reporting";
+                      description = "HAProxy backend that the helper manages.";
+                    };
+                    resolver = mkOption {
+                      type = types.nullOr types.str;
+                      default = null;
+                      description = "HAProxy resolver for the backend servers.";
+                    };
+                    caFile = mkOption {
+                      type = types.nullOr types.path;
+                      default = null;
+                      description = "CA certificate that the Data Plane API certificate chains to. Required with https.";
+                    };
+                    clientCertFile = mkOption {
+                      type = types.nullOr types.path;
+                      default = null;
+                      description = "Client certificate for the Data Plane API.";
+                    };
+                    clientKeyFile = mkOption {
+                      type = types.nullOr types.path;
+                      default = null;
+                      description = "Its private key.";
+                    };
+                    clientKeyPasswordFile = mkOption {
+                      type = types.nullOr types.path;
+                      default = null;
+                      description = "File with the password of the client key, one line without a comma.";
+                    };
+                    excludedNodes = mkOption {
+                      type = types.listOf (types.strMatching "[A-Za-z0-9_.-]+");
+                      default = [ ];
+                      description = "Cluster nodes that receive no agents.";
+                    };
+                    frequency = mkOption {
+                      type = types.nullOr (types.ints.between 10 2147483647);
+                      default = null;
+                      description = "Seconds between two balance checks.";
+                    };
+                    agentChunkSize = mkOption {
+                      type = types.nullOr (types.ints.between 100 2147483647);
+                      default = null;
+                      description = "Agents moved per step.";
+                    };
+                    agentReconnectionTime = mkOption {
+                      type = types.nullOr types.ints.unsigned;
+                      default = null;
+                      description = "Seconds between two reconnection steps.";
+                    };
+                    agentReconnectionStabilityTime = mkOption {
+                      type = types.nullOr (types.ints.between 10 2147483647);
+                      default = null;
+                      description = "Seconds the cluster must be stable before agents move.";
+                    };
+                    imbalanceTolerance = mkOption {
+                      type = types.nullOr (types.strMatching "0\\.[0-9]*[1-9][0-9]*|1(\\.0*)?");
+                      default = null;
+                      example = "0.1";
+                      description = "Tolerated share of imbalance between nodes: a decimal above 0 and at most 1.";
+                    };
+                    removeDisconnectedNodeAfter = mkOption {
+                      type = types.nullOr types.ints.unsigned;
+                      default = null;
+                      description = "Minutes before a disconnected node leaves the backend.";
+                    };
+                  };
+                }
+              );
+              default = null;
+              description = "The HAProxy helper of the master, which balances agents across the nodes.";
+            };
           };
         }
       );
       default = null;
       description = ''
         The manager cluster. A value runs wazuh-clusterd. null leaves the
-        cluster out. The haproxy_helper of the master is not supported.
+        cluster out.
       '';
     };
 
@@ -430,6 +546,20 @@ in
   };
 
   config = mkIf cfg.enable {
+    # The helper certificates are opaque files, staged byte for byte by the
+    # credentialFiles mechanism under etc/credentials.
+    services.wazuh-server.credentialFiles =
+      let
+        h = if cfg.cluster == null then null else cfg.cluster.haproxyHelper;
+      in
+      optionalAttrs (h != null) (
+        optionalAttrs (h.caFile != null) { cluster-haproxy-ca = h.caFile; }
+        // optionalAttrs (h.clientCertFile != null) {
+          cluster-haproxy-client-cert = h.clientCertFile;
+          cluster-haproxy-client-key = h.clientKeyFile;
+        }
+      );
+
     assertions = [
       {
         assertion = !cfg.email.enable || ((cfg.email.smtpServer == null) != (cfg.email.sendmail == null));
@@ -456,6 +586,31 @@ in
         # compatibility. Two cluster blocks are one too many.
         assertion = cfg.cluster == null || !(cfg.settings ? cluster) || cfg.settings.cluster == null;
         message = "services.wazuh-server: set cluster or settings.cluster, not both.";
+      }
+      {
+        # check_cluster_config refuses these as node addresses.
+        assertion =
+          cfg.cluster == null
+          || !(any (n: elem n [ "localhost" "NODE_IP" "0.0.0.0" "127.0.1.1" ]) cfg.cluster.nodes);
+        message = "services.wazuh-server.cluster.nodes: localhost, NODE_IP, 0.0.0.0 and 127.0.1.1 are reserved.";
+      }
+      {
+        assertion = cfg.cluster == null || cfg.cluster.haproxyHelper == null || cfg.cluster.nodeType == "master";
+        message = "services.wazuh-server.cluster.haproxyHelper: only the master runs the helper.";
+      }
+      {
+        # framework/wazuh/core/cluster/utils.py raises 3042 for https
+        # without a certificate.
+        assertion =
+          cfg.cluster == null || cfg.cluster.haproxyHelper == null
+          || cfg.cluster.haproxyHelper.protocol != "https" || cfg.cluster.haproxyHelper.caFile != null;
+        message = "services.wazuh-server.cluster.haproxyHelper: https needs caFile.";
+      }
+      {
+        assertion =
+          cfg.cluster == null || cfg.cluster.haproxyHelper == null
+          || ((cfg.cluster.haproxyHelper.clientCertFile == null) == (cfg.cluster.haproxyHelper.clientKeyFile == null));
+        message = "services.wazuh-server.cluster.haproxyHelper: set clientCertFile and clientKeyFile together.";
       }
       {
         # src/config/config.c ignores the block with a deprecation warning.

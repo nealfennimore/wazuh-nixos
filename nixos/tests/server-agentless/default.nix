@@ -128,14 +128,14 @@ pkgs.testers.runNixOSTest {
         # baseline, and sends the diff to analysisd.
         for user in ["monitor-key", "monitor-pw"]:
             server.wait_until_succeeds(f"ls '/var/ossec/queue/diff/{user}@target->ssh_generic_diff/' | grep -q '^diff\\.'", timeout=300)
-        # alerts.log names the device in the location line, followed by
-        # the rule line.
+        # alerts.json carries the device as agentless.user and
+        # agentless.host, with location wazuh-agentlessd.
         for user in ["monitor-key", "monitor-pw"]:
             server.wait_until_succeeds(
-                f"grep -A1 '{user}@target->wazuh-agentlessd' /var/ossec/logs/alerts/alerts.log | grep -q '^Rule: 555 '",
+                "grep '\"id\":\"555\"' /var/ossec/logs/alerts/alerts.json"
+                + f" | grep -F '\"agentless\":{{\"script\":\"ssh_generic_diff\",\"user\":\"{user}\",\"host\":\"target\"'",
                 timeout=300,
             )
-        print(server.execute("grep '\"id\":\"555\"' /var/ossec/logs/alerts/alerts.json | head -n 2")[1])
 
     with subtest("the password was never an argument of a process run as wazuh"):
         server.wait_for_unit("auditd.service")
