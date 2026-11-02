@@ -174,6 +174,12 @@
         # wazuh-maild against a local SMTP receiver and wazuh-csyslogd
         # against a local UDP receiver, in one VM.
         checks.server-optional = import ./nixos/tests/server-optional { inherit pkgs wazuhServerModule; };
+        # wazuh-agentlessd against an sshd target, with a key and a
+        # password from root-only files, in two VMs.
+        checks.server-agentless = import ./nixos/tests/server-agentless { inherit pkgs wazuhServerModule; };
+        # wazuh-clusterd on a master and a worker with a file-backed key,
+        # in two VMs.
+        checks.server-cluster = import ./nixos/tests/server-cluster { inherit pkgs wazuhServerModule; };
         # filebeat OSS 7.10.2, the shipper the upstream server package
         # installs. nixpkgs filebeat7 is the licensed build and refuses the
         # indexer (GET /_license on connect).

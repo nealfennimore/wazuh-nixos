@@ -61,6 +61,31 @@ let
       use_fqdn = s.useFqdn;
       format = s.format;
     };
+
+  agentless =
+    c:
+    xml.element "agentless" {
+      type = c.type;
+      frequency = c.frequency;
+      host = c.hosts;
+      state = c.state;
+      arguments = c.arguments;
+    };
+
+  clusterKeyId = "cluster-key";
+  cluster =
+    c:
+    xml.element "cluster" {
+      name = c.name;
+      node_name = c.nodeName;
+      node_type = c.nodeType;
+      key = "@WAZUH_SECRET_${clusterKeyId}@";
+      port = c.port;
+      bind_addr = c.bindAddr;
+      nodes.node = c.nodes;
+      hidden = c.hidden;
+      disabled = false;
+    };
 in
 {
   # Merged into the <global> defaults, below the settings option.
@@ -79,8 +104,19 @@ in
   blocks =
     concatMapStrings emailAlert cfg.emailAlerts
     + concatMapStrings report cfg.reports
-    + concatMapStrings syslogOutput cfg.syslogOutput;
+    + concatMapStrings syslogOutput cfg.syslogOutput
+    + concatMapStrings agentless cfg.agentless.checks
+    + lib.optionalString (cfg.cluster != null) (cluster cfg.cluster);
 
-  # id -> { source; target; }, as in runtime-config.nix.
-  secrets = { };
+  # id -> { source; target; pattern; }, as in runtime-config.nix. pattern
+  # is an extended regular expression that the whole value must match.
+  # wazuh-clusterd refuses a key that is not 32 letters and digits
+  # (framework/wazuh/core/cluster/cluster.py, check_cluster_config).
+  secrets = optionalAttrs (cfg.cluster != null) {
+    ${clusterKeyId} = {
+      source = cfg.cluster.keyFile;
+      target = "config";
+      pattern = "[A-Za-z0-9]{32}";
+    };
+  };
 }

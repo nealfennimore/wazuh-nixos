@@ -715,6 +715,26 @@ store unless the row says otherwise. PID 1 reads each `*File` option through
 | `reports.*.srcip` | `null` | The source address to report on. |
 | `reports.*.user` | `null` | The user name to report on. |
 | `reports.*.showLogs` | `false` | Includes the logs in the report. |
+| `agentless.checks` | `[ ]` | Agentless checks, one `<agentless>` block each. A non-empty list runs `wazuh-agentlessd`. |
+| `agentless.checks.*.type` | none | The script under `agentless/`, for example `ssh_integrity_check_linux` or `ssh_generic_diff`. |
+| `agentless.checks.*.hosts` | none | Devices as `user@host`. Each one needs an entry in `agentless.credentials`. |
+| `agentless.checks.*.frequency` | none | Seconds between two checks. |
+| `agentless.checks.*.state` | none | `periodic` analyzes the output like a log. `periodic_diff` alerts when the output changes. |
+| `agentless.checks.*.arguments` | `null` | Directories for the integrity checks, or the commands for `ssh_generic_diff`. |
+| `agentless.credentials` | `{ }` | Login data per `user@host`, written to `agentless/.passlist`. |
+| `agentless.credentials.<name>.passwordFile` | `null` | File with the SSH password, one line. `null` logs in with `agentless.sshKeyFile`. |
+| `agentless.credentials.<name>.additionalPasswordFile` | `null` | File with the `su` password, one line. |
+| `agentless.sshKeyFile` | `null` | The private SSH key for devices without a password. It is installed for the `wazuh` user. |
+| `agentless.knownHosts` | `""` | `known_hosts` lines for every device. A device whose key is not listed is refused. |
+| `cluster` | `null` | The manager cluster. A value runs `wazuh-clusterd`. |
+| `cluster.name` | `"wazuh"` | The cluster name. Every node uses the same one. |
+| `cluster.nodeName` | none | The name of this node. |
+| `cluster.nodeType` | none | `master` or `worker`. |
+| `cluster.keyFile` | none | File with the cluster key: 32 letters and digits, the same on every node. |
+| `cluster.port` | `1516` | The TCP port of the master. |
+| `cluster.bindAddr` | `"0.0.0.0"` | The address that the master listens on. |
+| `cluster.nodes` | none | The address of the master. Workers connect to the first entry. |
+| `cluster.hidden` | `false` | Leaves the cluster information out of alerts. |
 | `syslogOutput` | `[ ]` | Syslog servers that receive alerts, one `<syslog_output>` block each. A non-empty list runs `wazuh-csyslogd`. |
 | `syslogOutput.*.server` | none | The address or host name of the syslog server. |
 | `syslogOutput.*.port` | `514` | The UDP port. |
@@ -829,6 +849,55 @@ level for an e-mail. The generated default is 12. To mail lower levels, set
 4.14.8 has no `wazuh-dbd` and ignores the block with a deprecation warning.
 The module refuses the block, so that a host does not expect alerts in a
 database.
+
+### Monitor devices without an agent
+
+`agentless.checks` runs `wazuh-agentlessd`. It logs in to each device over
+SSH through the upstream expect scripts under `agentless/`. The passwords
+and the key come from root-only files. The setup unit writes the passwords
+to `agentless/.passlist` and the key to `/var/ossec/.ssh`. The scripts send
+a password over the terminal of the SSH session, not as a process argument.
+
+```nix
+services.wazuh-server.agentless = {
+  checks = [
+    { type = "ssh_integrity_check_linux"; hosts = [ "monitor@192.168.1.108" ];
+      frequency = 3600; state = "periodic"; arguments = "/etc /usr/bin"; }
+  ];
+  credentials."monitor@192.168.1.108".passwordFile = "/run/secrets/agentless-monitor";
+  knownHosts = "192.168.1.108 ssh-ed25519 AAAAC3...";
+};
+```
+
+The upstream scripts answer "yes" to an unknown host key. The module sets
+`StrictHostKeyChecking yes` instead, so `agentless.knownHosts` must list
+every device. A password must be one line without `|`, because `|`
+separates the fields of `.passlist`.
+
+The `ssh_generic_diff` script sends its commands without waiting for the
+prompt. So the captured output can vary from run to run, and a
+`periodic_diff` check can alert without a change on the device.
+
+### Run a manager cluster
+
+`cluster` runs `wazuh-clusterd`. Every node needs the same `name` and the
+same key in `keyFile`. The key must be 32 letters and digits. If it is
+not, the setup unit stops and keeps the installed `ossec.conf`. The key is
+written into the installed `ossec.conf`, where `wazuh-clusterd` reads it.
+The API masks it.
+
+```nix
+services.wazuh-server.cluster = {
+  nodeName = "master-node";
+  nodeType = "master";
+  keyFile = "/run/secrets/wazuh-cluster-key";
+  nodes = [ "192.168.1.10" ];
+};
+```
+
+With `openFirewall`, the master opens `cluster.port`. The disabled
+`settings.cluster` block of earlier configurations still works, but it
+cannot be combined with `cluster`.
 
 ### Enroll an agent against the server
 

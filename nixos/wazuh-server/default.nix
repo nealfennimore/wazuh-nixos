@@ -73,6 +73,23 @@ let
       "indexer-username" = cfg.indexer.usernameFile;
       "indexer-password" = cfg.indexer.passwordFile;
     }
+    // optionalAttrs (cfg.agentless.checks != [ ] && cfg.agentless.sshKeyFile != null) {
+      "agentless-key" = cfg.agentless.sshKeyFile;
+    }
+    // listToAttrs (
+      concatLists (
+        imap0 (
+          n: host:
+          let
+            c = cfg.agentless.credentials.${host};
+          in
+          optional (c.passwordFile != null) (nameValuePair "agentless-pass-${toString n}" c.passwordFile)
+          ++ optional (c.additionalPasswordFile != null) (
+            nameValuePair "agentless-addpass-${toString n}" c.additionalPasswordFile
+          )
+        ) (if cfg.agentless.checks == [ ] then [ ] else agentlessHosts)
+      )
+    )
     // mapAttrs' (id: s: nameValuePair "secret-${id}" s.source) allSecrets;
 
   # The listeners, integrations and GitHub module (runtime.nix). The XML is
@@ -84,6 +101,19 @@ let
   # its target: "argv" for integration-secrets.py, "config" for a value
   # that a daemon reads from ossec.conf.
   allSecrets = runtime.secrets // optionalServices.secrets;
+
+  # agentless: devices in a fixed order, so that credential n is device n.
+  agentlessHosts = attrNames cfg.agentless.credentials;
+  agentlessKnownHosts = pkgs.writeText "wazuh-agentless-known-hosts" cfg.agentless.knownHosts;
+  agentlessSshConfig = pkgs.writeText "wazuh-agentless-ssh-config" ''
+    Host *
+      StrictHostKeyChecking yes
+      UserKnownHostsFile ${stateDir}/.ssh/known_hosts
+      GlobalKnownHostsFile /dev/null
+    ${optionalString (cfg.agentless.sshKeyFile != null) ''
+      IdentityFile ${stateDir}/.ssh/id_agentless
+      IdentitiesOnly yes
+    ''}'';
   argvSecrets = filterAttrs (_: s: s.target == "argv") allSecrets;
   configSecrets = filterAttrs (_: s: s.target == "config") allSecrets;
   lowPortListeners = filter (l: l.port < 1024) cfg.remote.listeners;
@@ -161,9 +191,10 @@ let
     "lib"
     "wodles"
     "framework"
-    "agentless"
     "templates"
-  ];
+  ]
+  # With agentless checks the setup unit installs a real copy instead.
+  ++ optional (cfg.agentless.checks == [ ]) "agentless";
 
   # Package trees that a chrooting daemon reads. Real copies, refreshed on
   # every activation so an upgrade replaces them.
@@ -310,6 +341,92 @@ let
     rm -rf ${stateDir}/integrations
     mv ${stateDir}/integrations.new ${stateDir}/integrations
 
+    # agentless. Without checks it stays a store link (linkedPackageDirs),
+    # and a .ssh that this module wrote earlier is removed with its key.
+    # With checks it is a real copy, because the scripts read
+    # agentless/.passlist beside themselves (agentless/main.exp) and the
+    # module writes that file. The copy, the password list and the SSH
+    # files are built in a fresh directory under ${stateDir}, which only
+    # root can write, and renamed into place with mv -T.
+    ${
+      if cfg.agentless.checks == [ ] then
+        ''
+          if [ -e ${stateDir}/.ssh/.managed-by-nixos ]; then
+            rm -rf ${stateDir}/.ssh
+          fi
+        ''
+      else
+        ''
+          lessd=$(mktemp -d ${stateDir}/.wazuh-agentless-setup.XXXXXX)
+          trap 'rm -rf "$lessd"' EXIT
+          if [ -L ${stateDir}/agentless ]; then
+            rm ${stateDir}/agentless
+          fi
+          cp -R --no-preserve=ownership,mode ${pkg}/agentless "$lessd/agentless"
+          chown -R root:${wazuhGroup} "$lessd/agentless"
+          chmod 0750 "$lessd/agentless"
+          find "$lessd/agentless" -type f -exec chmod 0750 {} +
+
+          # One line per device, user@host|password|su password, base64 as
+          # a whole, as register_host.sh writes it. NOPASS selects the key.
+          # A password is one line without "|", which separates the fields.
+          read_agentless_secret() {
+            local LC_ALL=C
+            local value
+            value=$(cat "$CREDENTIALS_DIRECTORY/$1")
+            case "$value" in
+              "" | *"|"* | *$'\n'*)
+                echo "wazuh-server-setup: $1 must be one line without |" >&2
+                exit 1
+                ;;
+            esac
+            printf '%s' "$value"
+          }
+          : > "$lessd/passlist"
+          chmod 0600 "$lessd/passlist"
+          ${concatStringsSep "\n" (
+            imap0 (
+              n: host:
+              let
+                c = cfg.agentless.credentials.${host};
+              in
+              ''
+                pass=${
+                  if c.passwordFile == null then "NOPASS" else "$(read_agentless_secret agentless-pass-${toString n})"
+                }
+                addpass=${
+                  optionalString (c.additionalPasswordFile != null) "$(read_agentless_secret agentless-addpass-${toString n})"
+                }
+                printf '%s|%s|%s\n' ${escapeShellArg host} "$pass" "$addpass" >> "$lessd/passlist"
+              ''
+            ) agentlessHosts
+          )}
+          base64 -w0 "$lessd/passlist" > "$lessd/agentless/.passlist"
+          rm "$lessd/passlist"
+          chown root:${wazuhGroup} "$lessd/agentless/.passlist"
+          chmod 0640 "$lessd/agentless/.passlist"
+
+          # ssh reads ~/.ssh of the wazuh user, whose home is ${stateDir}.
+          # It refuses a private key that another user can read, so the key
+          # belongs to wazuh.
+          install -d -m 0750 -o root -g ${wazuhGroup} "$lessd/ssh"
+          install -m 0640 -o root -g ${wazuhGroup} ${agentlessSshConfig} "$lessd/ssh/config"
+          install -m 0640 -o root -g ${wazuhGroup} ${agentlessKnownHosts} "$lessd/ssh/known_hosts"
+          ${optionalString (cfg.agentless.sshKeyFile != null) ''
+            install -m 0600 -o ${wazuhUser} -g ${wazuhGroup} "$CREDENTIALS_DIRECTORY/agentless-key" "$lessd/ssh/id_agentless"
+          ''}
+          touch "$lessd/ssh/.managed-by-nixos"
+
+          # Every secret is valid. Install both.
+          rm -rf ${stateDir}/agentless
+          mv -T "$lessd/agentless" ${stateDir}/agentless
+          rm -rf ${stateDir}/.ssh
+          mv -T "$lessd/ssh" ${stateDir}/.ssh
+          rm -rf "$lessd"
+          trap - EXIT
+        ''
+    }
+
     # State trees. The directory inodes are mount points in the daemon
     # namespaces (ReadWritePaths), so they are created when absent and never
     # removed; deleting a mount point detaches the mount in every namespace.
@@ -413,8 +530,14 @@ let
           cp ${generatedConfig} "$staging/ossec.conf"
           chmod 0600 "$staging/ossec.conf"
           ${concatStringsSep "\n" (
-            mapAttrsToList (id: _: ''
+            mapAttrsToList (id: secret: ''
               value=$(read_secret ${id})
+              ${optionalString ((secret.pattern or null) != null) ''
+                if ! printf '%s' "$value" | grep -Eqx ${escapeShellArg secret.pattern}; then
+                  echo "wazuh-server-setup: secret ${id} does not match ${secret.pattern}" >&2
+                  exit 1
+                fi
+              ''}
               TOKEN=${escapeShellArg (runtime.token id)} VALUE="$value" awk '
                 BEGIN { t = ENVIRON["TOKEN"]; v = ENVIRON["VALUE"] }
                 {
@@ -538,10 +661,11 @@ let
     ''}
   '';
 
-  # The daemons, in the order src/init/wazuh-server.sh starts them, minus
-  # the ones this revision does not run: clusterd and agentlessd (optional
-  # upstream). execd is conditional on activeResponse.enable, integratord
-  # on integrations, maild on email.enable and csyslogd on syslogOutput.
+  # The daemons, in the order src/init/wazuh-server.sh starts them. The
+  # optional ones are conditional. execd runs on
+  # activeResponse.enable, integratord on integrations, maild on
+  # email.enable, csyslogd on syslogOutput, agentlessd on agentless.checks
+  # and clusterd on cluster.
   #
   # chroot: the daemon calls chroot(home) after reading its configuration.
   # writable: state outside the four shared trees that this daemon writes.
@@ -683,6 +807,41 @@ let
     wazuh-csyslogd = {
       after = [ "wazuh-analysisd.service" ];
     };
+  }
+  // optionalAttrs (cfg.cluster != null) {
+    # clusterd is Python (framework/scripts/wazuh_clusterd.py), so it runs
+    # under the package interpreter, as wazuh-apid does: bin/wazuh-clusterd
+    # derives the home from its own location, which is the store. Its own
+    # setuid/setgid to wazuh is a no-op for the wazuh user. A worker
+    # receives client.keys, the group files, rules, decoders and lists from
+    # the master, so etc is writable for it, as for authd.
+    wazuh-clusterd = {
+      after = [
+        "wazuh-db.service"
+        "wazuh-analysisd.service"
+      ];
+      writable = [ "etc" ];
+      serviceConfig = {
+        ExecStart = "${pkg}/framework/python/bin/python3 ${pkg}/framework/scripts/wazuh_clusterd.py -f";
+        MemoryDenyWriteExecute = false;
+      };
+    };
+  }
+  // optionalAttrs (cfg.agentless.checks != [ ]) {
+    # agentlessd runs agentless/<type> for each device. The scripts are
+    # expect programs that spawn ssh and read agentless/.passlist, and
+    # periodic_diff compares the output with diff. It does not chroot
+    # (src/agentlessd/main.c). The passwords travel over the pty of the
+    # ssh session, which PrivateDevices keeps.
+    wazuh-agentlessd = {
+      after = [ "wazuh-analysisd.service" ];
+      path = [
+        pkgs.expect
+        pkgs.openssh
+        pkgs.coreutils
+        pkgs.diffutils
+      ];
+    };
   };
 
   sharedWritableDirs = [
@@ -768,7 +927,7 @@ let
       ]
       ++ unit.after;
       requires = [ "wazuh-server-setup.service" ];
-      path = cfg.path ++ [
+      path = cfg.path ++ (unit.path or [ ]) ++ [
         "/run/current-system/sw"
         "/run/wrappers"
       ];
@@ -1043,6 +1202,7 @@ in
       map (l: l.port) (filter (l: elem "tcp" l.protocol) cfg.remote.listeners)
       ++ [ cfg.api.port ]
       ++ optional cfg.auth.enable cfg.auth.port
+      ++ optional (cfg.cluster != null && cfg.cluster.nodeType == "master") cfg.cluster.port
     );
     networking.firewall.allowedUDPPorts = mkIf cfg.openFirewall (
       map (l: l.port) (filter (l: elem "udp" l.protocol) cfg.remote.listeners)

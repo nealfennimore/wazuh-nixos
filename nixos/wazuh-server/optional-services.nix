@@ -1,6 +1,7 @@
 # Options for the optional manager daemons: e-mail (wazuh-maild, with
-# <email_alerts> and the <reports> that wazuh-monitord mails) and syslog
-# forwarding (wazuh-csyslogd).
+# <email_alerts> and the <reports> that wazuh-monitord mails), syslog
+# forwarding (wazuh-csyslogd), agentless monitoring (wazuh-agentlessd) and
+# the manager cluster (wazuh-clusterd).
 #
 # optional-services-config.nix writes their ossec.conf blocks.
 # default.nix runs the units.
@@ -169,6 +170,65 @@ let
       };
     };
   };
+
+  # The check scripts that pkgs/wazuh-server installs under agentless/.
+  agentlessTypes = [
+    "ssh_integrity_check_linux"
+    "ssh_integrity_check_bsd"
+    "ssh_generic_diff"
+    "ssh_pixconfig_diff"
+    "ssh_asa-fwsmconfig_diff"
+    "ssh_foundry_diff"
+  ];
+
+  agentlessCheck = types.submodule {
+    options = {
+      type = mkOption {
+        type = types.enum agentlessTypes;
+        description = "The agentless script under agentless/ that runs the check.";
+      };
+      hosts = mkOption {
+        type = types.nonEmptyListOf (types.strMatching "[A-Za-z0-9._-]+@[A-Za-z0-9._:-]+");
+        example = [ "monitor@192.168.1.108" ];
+        description = "Devices as user@host. Each one needs an entry in agentless.credentials.";
+      };
+      frequency = mkOption {
+        type = types.ints.positive;
+        description = "Seconds between two checks.";
+      };
+      state = mkOption {
+        type = types.enum [
+          "periodic"
+          "periodic_diff"
+        ];
+        description = "periodic: the output is analyzed like a log. periodic_diff: a change from the last output raises an alert.";
+      };
+      arguments = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "/etc /usr/bin /usr/sbin";
+        description = "Directories for the integrity checks, or the commands for ssh_generic_diff.";
+      };
+    };
+  };
+
+  agentlessCredential = types.submodule {
+    options = {
+      passwordFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = ''
+          File with the SSH password, one line. null logs in with
+          agentless.sshKeyFile instead.
+        '';
+      };
+      additionalPasswordFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = "File with the su password that the scripts send after login, one line.";
+      };
+    };
+  };
 in
 {
   options.services.wazuh-server = {
@@ -253,6 +313,115 @@ in
       '';
     };
 
+    agentless = {
+      checks = mkOption {
+        type = types.listOf agentlessCheck;
+        default = [ ];
+        description = ''
+          Agentless checks, one <agentless> block each. A non-empty list runs
+          wazuh-agentlessd, which logs in to each device over SSH through the
+          expect scripts under agentless/.
+        '';
+      };
+      credentials = mkOption {
+        type = types.attrsOf agentlessCredential;
+        default = { };
+        example = literalExpression ''
+          {
+            "monitor@192.168.1.108".passwordFile = "/run/secrets/agentless-monitor";
+            "backup@192.168.1.109" = { };
+          }
+        '';
+        description = ''
+          Login data per user@host. The setup unit writes it to
+          agentless/.passlist, the file that the scripts read. An entry
+          without passwordFile uses the SSH key. The scripts send a password
+          over the terminal of the SSH session, not as an argument.
+        '';
+      };
+      sshKeyFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = ''
+          Private SSH key for the devices without a password. Read by PID 1
+          through LoadCredential and installed for the wazuh user, because
+          ssh refuses a key that another user can read.
+        '';
+      };
+      knownHosts = mkOption {
+        type = types.lines;
+        default = "";
+        example = "192.168.1.108 ssh-ed25519 AAAAC3...";
+        description = ''
+          known_hosts lines for every device. The upstream scripts answer
+          "yes" to an unknown host key (agentless/ssh.exp). The module sets
+          StrictHostKeyChecking yes instead, so a device whose key is not
+          listed here is refused.
+        '';
+      };
+    };
+
+    cluster = mkOption {
+      type = types.nullOr (
+        types.submodule {
+          options = {
+            name = mkOption {
+              type = types.strMatching "[A-Za-z0-9_.-]+";
+              default = "wazuh";
+              description = "Cluster name. Every node uses the same one.";
+            };
+            nodeName = mkOption {
+              type = types.strMatching "[A-Za-z0-9_.-]+";
+              description = "Name of this node, unique in the cluster.";
+            };
+            nodeType = mkOption {
+              type = types.enum [
+                "master"
+                "worker"
+              ];
+              description = "master or worker. A cluster has one master.";
+            };
+            keyFile = mkOption {
+              type = types.path;
+              example = "/run/secrets/wazuh-cluster-key";
+              description = ''
+                File with the cluster key: 32 letters and digits on one line,
+                the same on every node. Read by PID 1 through LoadCredential
+                and written into the installed ossec.conf, where
+                wazuh-clusterd reads it. The API masks it in configuration
+                responses.
+              '';
+            };
+            port = mkOption {
+              type = types.port;
+              default = 1516;
+              description = "TCP port of the master. Workers connect to it.";
+            };
+            bindAddr = mkOption {
+              type = types.str;
+              default = "0.0.0.0";
+              description = "Address the master listens on.";
+            };
+            nodes = mkOption {
+              type = types.nonEmptyListOf types.str;
+              example = [ "192.168.1.10" ];
+              description = "Address of the master node. Workers connect to the first entry.";
+            };
+            hidden = mkOption {
+              type = types.bool;
+              default = false;
+              description = "Leave the cluster information out of alerts.";
+            };
+          };
+        }
+      );
+      default = null;
+      description = ''
+        The manager cluster. A value runs wazuh-clusterd. null leaves the
+        cluster out. The haproxy_helper of the master is not supported.
+      '';
+    };
+
     syslogOutput = mkOption {
       type = types.listOf syslogOutput;
       default = [ ];
@@ -269,6 +438,24 @@ in
       {
         assertion = cfg.email.enable || (cfg.emailAlerts == [ ] && cfg.reports == [ ]);
         message = "services.wazuh-server: emailAlerts and reports need email.enable.";
+      }
+      {
+        assertion = all (h: cfg.agentless.credentials ? ${h}) (concatMap (c: c.hosts) cfg.agentless.checks);
+        message = "services.wazuh-server.agentless: every host in checks needs an entry in agentless.credentials.";
+      }
+      {
+        assertion = cfg.agentless.checks == [ ] || cfg.agentless.knownHosts != "";
+        message = "services.wazuh-server.agentless.knownHosts must list the host key of every device.";
+      }
+      {
+        assertion = all (c: c.passwordFile != null) (attrValues cfg.agentless.credentials) || cfg.agentless.sshKeyFile != null;
+        message = "services.wazuh-server.agentless: a credential without passwordFile needs agentless.sshKeyFile.";
+      }
+      {
+        # The settings option keeps a disabled raw <cluster> block for
+        # compatibility. Two cluster blocks are one too many.
+        assertion = cfg.cluster == null || !(cfg.settings ? cluster) || cfg.settings.cluster == null;
+        message = "services.wazuh-server: set cluster or settings.cluster, not both.";
       }
       {
         # src/config/config.c ignores the block with a deprecation warning.
