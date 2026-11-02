@@ -33,6 +33,14 @@ pkgs.testers.runNixOSTest {
         allowHigherVersions = false;
       }];
       settings = {
+        gcp-bucket = {
+          enabled = false;
+          bucket = {
+            _attributes.type = "access_logs";
+            name = "reference";
+            credentials_file._credential = "google";
+          };
+        };
         labels.label = { _attributes.key = "reference.environment"; _text = "test"; };
         agent-upgrade = { chunk_size = 16384; max_threads = 2; };
         fluent-forward = {
