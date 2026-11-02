@@ -1,12 +1,5 @@
-# Writes the manager's ossec.conf.
-#
-# The block order follows WriteManager in src/init/inst-functions.sh at
-# v4.14.8, and each block starts from the matching template under
-# etc/templates/config/generic. Blocks that the module does not run are left
-# out rather than disabled, except where a missing block means "enabled by
-# default" to Wazuh. <indexer> and <vulnerability-detection> are the two
-# cases: both default to enabled, so with no indexer they are written with
-# <enabled>no</enabled>.
+# Generate one merged tree for configurable sections. Service-owned sections
+# remain separate: their options also control credentials and systemd units.
 {
   cfg,
   pkgs,
@@ -14,223 +7,147 @@
 }:
 let
   inherit (pkgs) lib;
-  inherit (lib) concatMapStrings optionalString;
-
-  # <remote>, <integration> and <github>, from the options in runtime.nix.
+  xml = import ./xml.nix { inherit lib; };
   runtime = import ./runtime-config.nix { inherit cfg lib; };
-
-  yesNo = b: if b then "yes" else "no";
-
-  global = ''
-    <global>
-      <jsonout_output>yes</jsonout_output>
-      <alerts_log>yes</alerts_log>
-      <logall>${yesNo cfg.logAll}</logall>
-      <logall_json>${yesNo cfg.logAll}</logall_json>
-      <email_notification>no</email_notification>
-      <agents_disconnection_time>15m</agents_disconnection_time>
-      <agents_disconnection_alert_time>0</agents_disconnection_alert_time>
-      <update_check>no</update_check>
-    </global>
-  '';
-
-  alerts = ''
-    <alerts>
-      <log_alert_level>${toString cfg.alertLevel}</log_alert_level>
-      <email_alert_level>12</email_alert_level>
-    </alerts>
-  '';
-
-  logging = ''
-    <logging>
-      <log_format>plain</log_format>
-    </logging>
-  '';
-
-  # The vulnerability scanner reads its feed into the indexer. Without an
-  # indexer it has nowhere to write, so it is off.
-  vulnerabilityDetection = ''
-    <vulnerability-detection>
-      <enabled>${yesNo (cfg.indexer != null)}</enabled>
-      <index-status>yes</index-status>
-      <feed-update-interval>60m</feed-update-interval>
-    </vulnerability-detection>
-  '';
-
-  # The TLS paths point at the copies that setup-pre-wazuh-server installs
-  # under etc/, not at the configured source paths. wazuh-modulesd reads them
-  # as the wazuh user, and the source files can belong to root.
-  indexer =
-    if cfg.indexer == null then
-      ''
-        <indexer>
-          <enabled>no</enabled>
-        </indexer>
-      ''
-    else
-      ''
-        <indexer>
-          <enabled>yes</enabled>
-          <hosts>
-        ${concatMapStrings (h: "      <host>${h}</host>\n") cfg.indexer.hosts}    </hosts>
-          <ssl>
-            <certificate_authorities>
-              <ca>${credentialPaths.indexerCa}</ca>
-            </certificate_authorities>
-            <certificate>${credentialPaths.indexerCertificate}</certificate>
-            <key>${credentialPaths.indexerKey}</key>
-          </ssl>
-        </indexer>
-      '';
-
-  ruleset = ''
-    <ruleset>
-      <!-- Default ruleset -->
-      <decoder_dir>ruleset/decoders</decoder_dir>
-      <rule_dir>ruleset/rules</rule_dir>
-      <rule_exclude>0215-policy_rules.xml</rule_exclude>
-      <list>etc/lists/audit-keys</list>
-      <list>etc/lists/amazon/aws-eventnames</list>
-      <list>etc/lists/security-eventchannel</list>
-      <list>etc/lists/malicious-ioc/malware-hashes</list>
-      <list>etc/lists/malicious-ioc/malicious-ip</list>
-      <list>etc/lists/malicious-ioc/malicious-domains</list>
-
-      <!-- User-defined ruleset -->
-      <decoder_dir>etc/decoders</decoder_dir>
-      <rule_dir>etc/rules</rule_dir>
-    </ruleset>
-  '';
-
-  ruleTest = ''
-    <rule_test>
-      <enabled>yes</enabled>
-      <threads>1</threads>
-      <max_sessions>64</max_sessions>
-      <session_timeout>15m</session_timeout>
-    </rule_test>
-  '';
-
-  # ssl_manager_cert and ssl_manager_key are relative to /var/ossec. The
-  # setup unit installs the configured pair there, or generates a
-  # self-signed pair the way the upstream installer does.
-  auth = ''
-    <auth>
-      <disabled>${yesNo (!cfg.auth.enable)}</disabled>
-      <port>${toString cfg.auth.port}</port>
-      <ipv6>${yesNo cfg.listenIPv6}</ipv6>
-      <use_source_ip>no</use_source_ip>
-      <purge>yes</purge>
-      <use_password>${yesNo (cfg.auth.passwordFile != null)}</use_password>
-      <ciphers>HIGH:!ADH:!EXP:!MD5:!RC4:!3DES:!CAMELLIA:@STRENGTH</ciphers>
-      ${optionalString (cfg.auth.agentCa != null) "<ssl_agent_ca>${credentialPaths.authAgentCa}</ssl_agent_ca>"}
-      <ssl_verify_host>no</ssl_verify_host>
-      <ssl_manager_cert>etc/sslmanager.cert</ssl_manager_cert>
-      <ssl_manager_key>etc/sslmanager.key</ssl_manager_key>
-      <ssl_auto_negotiate>no</ssl_auto_negotiate>
-    </auth>
-  '';
-
-  # Active response. WriteManager writes three templates here, in this
-  # order: etc/templates/config/generic/global-ar.template (a second
-  # <global> block with the white list), ar-commands.template (the
-  # <command> definitions) and ar-definitions.template (a commented-out
-  # <active-response> placeholder). The white list and the commands below
-  # are copied from those files at v4.14.8, with two deviations:
-  #
-  #   - The installer appends the host's resolv.conf name servers to the
-  #     white list. A NixOS host declares them elsewhere; add them through
-  #     extraConfig if a response must never hit them.
-  #   - The restart-wazuh command is left out. pkgs/wazuh-server deletes its
-  #     program, because systemd owns restarts here.
-  #
-  # win_route-null and netsh name Windows programs. They are definitions
-  # only, pushed to agents through etc/shared/ar.conf when a block binds
-  # them, so they stay as upstream has them.
-  #
-  # With active response off, analysisd gets <disabled>yes</disabled>
-  # (src/config/active-response.c:125-127 sets ar_flag = -1 and skips the
-  # block) and no commands, and execd does not run.
-  activeResponse =
+  command = name: executable: {
+    inherit name executable;
+    timeout_allowed = true;
+  };
+  defaults = {
+    global = {
+      jsonout_output = true;
+      alerts_log = true;
+      logall = cfg.logAll;
+      logall_json = cfg.logAll;
+      email_notification = false;
+      agents_disconnection_time = "15m";
+      agents_disconnection_alert_time = 0;
+      update_check = false;
+    }
+    // lib.optionalAttrs cfg.activeResponse.enable {
+      white_list = [
+        "127.0.0.1"
+        "^localhost.localdomain$"
+      ];
+    };
+    alerts = {
+      log_alert_level = cfg.alertLevel;
+      email_alert_level = 12;
+    };
+    logging.log_format = "plain";
+    vulnerability-detection = {
+      enabled = cfg.indexer != null;
+      index-status = true;
+      feed-update-interval = "60m";
+    };
+    ruleset = {
+      decoder_dir = [
+        "ruleset/decoders"
+        "etc/decoders"
+      ];
+      rule_dir = [
+        "ruleset/rules"
+        "etc/rules"
+      ];
+      rule_exclude = "0215-policy_rules.xml";
+      list = [
+        "etc/lists/audit-keys"
+        "etc/lists/amazon/aws-eventnames"
+        "etc/lists/security-eventchannel"
+        "etc/lists/malicious-ioc/malware-hashes"
+        "etc/lists/malicious-ioc/malicious-ip"
+        "etc/lists/malicious-ioc/malicious-domains"
+      ];
+    };
+    rule_test = {
+      enabled = true;
+      threads = 1;
+      max_sessions = 64;
+      session_timeout = "15m";
+    };
+    localfile = [
+      {
+        log_format = "syslog";
+        location = "/var/ossec/logs/active-responses.log";
+      }
+    ];
+  }
+  // (
     if cfg.activeResponse.enable then
-      ''
-        <!-- Active response -->
-        <global>
-          <white_list>127.0.0.1</white_list>
-          <white_list>^localhost.localdomain$</white_list>
-        </global>
-
-        <command>
-          <name>disable-account</name>
-          <executable>disable-account</executable>
-          <timeout_allowed>yes</timeout_allowed>
-        </command>
-
-        <command>
-          <name>firewall-drop</name>
-          <executable>firewall-drop</executable>
-          <timeout_allowed>yes</timeout_allowed>
-        </command>
-
-        <command>
-          <name>host-deny</name>
-          <executable>host-deny</executable>
-          <timeout_allowed>yes</timeout_allowed>
-        </command>
-
-        <command>
-          <name>route-null</name>
-          <executable>route-null</executable>
-          <timeout_allowed>yes</timeout_allowed>
-        </command>
-
-        <command>
-          <name>win_route-null</name>
-          <executable>route-null.exe</executable>
-          <timeout_allowed>yes</timeout_allowed>
-        </command>
-
-        <command>
-          <name>netsh</name>
-          <executable>netsh.exe</executable>
-          <timeout_allowed>yes</timeout_allowed>
-        </command>
-
-        <!--
-        <active-response>
-          active-response options here
-        </active-response>
-        -->
-      ''
+      {
+        # restart-wazuh is intentionally absent: systemd owns process lifetime.
+        command = [
+          (command "disable-account" "disable-account")
+          (command "firewall-drop" "firewall-drop")
+          (command "host-deny" "host-deny")
+          (command "route-null" "route-null")
+          (command "win_route-null" "route-null.exe")
+          (command "netsh" "netsh.exe")
+        ];
+      }
     else
-      ''
-        <active-response>
-          <disabled>yes</disabled>
-        </active-response>
-      '';
-
-  # The manager monitors its own logs. The commands in the upstream
-  # localfile-commands template (df, netstat, last) are left out: they need
-  # tools that a NixOS host does not put on the daemon PATH by default.
-  localfile = ''
-    <localfile>
-      <log_format>syslog</log_format>
-      <location>/var/ossec/logs/active-responses.log</location>
-    </localfile>
-  '';
+      { active-response.disabled = true; }
+  );
+  settings = lib.recursiveUpdate defaults cfg.settings;
+  # ReadConfig processes sections in document order. Active responses look
+  # up an already-read command, so alphabetical attribute order is invalid.
+  sectionOrder = [
+    "global"
+    "alerts"
+    "logging"
+    "rootcheck"
+    "wodle"
+    "sca"
+    "syscheck"
+    "command"
+    "active-response"
+    "localfile"
+    "ruleset"
+    "rule_test"
+    "cluster"
+    "vulnerability-detection"
+  ];
+  renderedSettings = lib.concatMapStrings (
+    name: xml.element name (settings.${name} or null)
+  ) sectionOrder;
+  indexer = xml.element "indexer" (
+    if cfg.indexer == null then
+      { enabled = false; }
+    else
+      {
+        enabled = true;
+        hosts.host = cfg.indexer.hosts;
+        ssl = {
+          certificate_authorities.ca = credentialPaths.indexerCa;
+          certificate = credentialPaths.indexerCertificate;
+          key = credentialPaths.indexerKey;
+        };
+      }
+  );
+  auth = xml.element "auth" (
+    {
+      disabled = !cfg.auth.enable;
+      port = cfg.auth.port;
+      ipv6 = cfg.listenIPv6;
+      use_source_ip = false;
+      purge = true;
+      use_password = cfg.auth.passwordFile != null;
+      ciphers = "HIGH:!ADH:!EXP:!MD5:!RC4:!3DES:!CAMELLIA:@STRENGTH";
+      ssl_verify_host = false;
+      ssl_manager_cert = "etc/sslmanager.cert";
+      ssl_manager_key = "etc/sslmanager.key";
+      ssl_auto_negotiate = false;
+    }
+    // lib.optionalAttrs (cfg.auth.agentCa != null) {
+      ssl_agent_ca = credentialPaths.authAgentCa;
+    }
+  );
 in
 pkgs.writeText "ossec.conf" ''
   <ossec_config>
-  ${global}
-  ${alerts}
-  ${logging}
+  ${renderedSettings}
   ${runtime.remote}
-  ${vulnerabilityDetection}
   ${indexer}
-  ${activeResponse}
-  ${localfile}
-  ${ruleset}
-  ${ruleTest}
   ${auth}
   ${runtime.integrations}
   ${runtime.github}
