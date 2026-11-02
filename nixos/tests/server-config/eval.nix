@@ -29,6 +29,22 @@ let
       ];
     }).config;
   rejected = settings: lib.any (a: !a.assertion) (hostConfig { inherit settings; }).assertions;
+  references =
+    overrides:
+    import ../../wazuh-server/settings-runtime.nix {
+      inherit lib;
+      cfg = {
+        settings = { };
+        auth.settings = { };
+        secretFiles = {
+          token = "/run/secrets/token";
+        };
+        credentialFiles = {
+          google = "/run/secrets/google.json";
+        };
+      }
+      // overrides;
+    };
   disabledResponse = hostConfig {
     activeResponse.enable = false;
     settings.active-response = [
@@ -103,6 +119,26 @@ assert fails (
   }
 );
 assert rejected { remote.port = 514; };
+assert (references { }).resolve { _secret = "token"; } == "@WAZUH_SECRET_settings-token@";
+assert (references { }).resolve { _credential = "google"; } == "/var/ossec/etc/credentials/google";
+assert fails ((references { }).resolve { _secret = "missing"; });
+assert fails ((references { }).resolve { _credential = "missing"; });
+assert fails (
+  (references { }).resolve {
+    _secret = "token";
+    child = "bad";
+  }
+);
+assert fails ((references { }).resolve { _attributes.key._secret = "token"; });
+assert fails (references { settings.wodle.password._secret = "token"; }).settings;
+assert fails (references { settings.localfile.command._secret = "token"; }).settings;
+assert
+  (references { settings.office365.api_auth.client_secret._secret = "token"; }).secrets == {
+    settings-token = {
+      source = "/run/secrets/token";
+      target = "config";
+    };
+  };
 assert rejected { global.email_notification = true; };
 assert rejected { cluster.disabled = false; };
 assert rejected { vulnerability-detection.enabled = true; };

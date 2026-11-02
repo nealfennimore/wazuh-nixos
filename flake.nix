@@ -154,7 +154,12 @@
         # answering with auth. It builds the server package first.
         checks.server = import ./nixos/tests/server { inherit pkgs wazuhServerModule; };
         checks.server-config = import ./nixos/tests/server-config { inherit pkgs wazuhServerModule; };
-        checks.server-config-eval = import ./nixos/tests/server-config/eval.nix { inherit pkgs nixpkgs wazuhServerModule; };
+        checks.server-reference = import ./nixos/tests/server-config/reference.nix {
+          inherit pkgs wazuhServerModule;
+        };
+        checks.server-config-eval = import ./nixos/tests/server-config/eval.nix {
+          inherit pkgs nixpkgs wazuhServerModule;
+        };
         # The agent module against the server module, in two VMs: the agent
         # verifies authd with the test CA and enrolls, connects to remoted,
         # and an event written on the agent reaches the server's archive

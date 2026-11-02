@@ -9,6 +9,7 @@ let
   inherit (pkgs) lib;
   xml = import ./xml.nix { inherit lib; };
   runtime = import ./runtime-config.nix { inherit cfg lib; };
+  settingsRuntime = import ./settings-runtime.nix { inherit cfg lib; };
   command = name: executable: {
     inherit name executable;
     timeout_allowed = true;
@@ -36,7 +37,7 @@ let
     };
     logging.log_format = "plain";
     vulnerability-detection = {
-      enabled = cfg.indexer != null;
+      enabled = cfg.indexer != null && cfg.indexer.enable;
       index-status = true;
       feed-update-interval = "60m";
     };
@@ -88,7 +89,7 @@ let
     else
       { active-response.disabled = true; }
   );
-  settings = lib.recursiveUpdate defaults cfg.settings;
+  settings = lib.recursiveUpdate defaults settingsRuntime.settings;
   # ReadConfig processes sections in document order. Active responses look
   # up an already-read command, so alphabetical attribute order is invalid.
   sectionOrder = [
@@ -106,6 +107,16 @@ let
     "rule_test"
     "cluster"
     "vulnerability-detection"
+    "labels"
+    "agent-upgrade"
+    "fluent-forward"
+    "ms-graph"
+    "office365"
+    "socket"
+    "task-manager"
+    "wdb"
+    "gcp-pubsub"
+    "gcp-bucket"
   ];
   renderedSettings = lib.concatMapStrings (
     name: xml.element name (settings.${name} or null)
@@ -115,32 +126,37 @@ let
       { enabled = false; }
     else
       {
-        enabled = true;
+        enabled = cfg.indexer.enable;
         hosts.host = cfg.indexer.hosts;
         ssl = {
-          certificate_authorities.ca = credentialPaths.indexerCa;
+          certificate_authorities.ca = [
+            credentialPaths.indexerCa
+          ]
+          ++ (credentialPaths.indexerAdditionalCas or [ ]);
           certificate = credentialPaths.indexerCertificate;
           key = credentialPaths.indexerKey;
         };
       }
   );
   auth = xml.element "auth" (
-    {
-      disabled = !cfg.auth.enable;
-      port = cfg.auth.port;
-      ipv6 = cfg.listenIPv6;
-      use_source_ip = false;
-      purge = true;
-      use_password = cfg.auth.passwordFile != null;
-      ciphers = "HIGH:!ADH:!EXP:!MD5:!RC4:!3DES:!CAMELLIA:@STRENGTH";
-      ssl_verify_host = false;
-      ssl_manager_cert = "etc/sslmanager.cert";
-      ssl_manager_key = "etc/sslmanager.key";
-      ssl_auto_negotiate = false;
-    }
-    // lib.optionalAttrs (cfg.auth.agentCa != null) {
-      ssl_agent_ca = credentialPaths.authAgentCa;
-    }
+    lib.recursiveUpdate (
+      {
+        disabled = !cfg.auth.enable;
+        port = cfg.auth.port;
+        ipv6 = cfg.listenIPv6;
+        use_source_ip = false;
+        purge = true;
+        use_password = cfg.auth.passwordFile != null;
+        ciphers = "HIGH:!ADH:!EXP:!MD5:!RC4:!3DES:!CAMELLIA:@STRENGTH";
+        ssl_verify_host = false;
+        ssl_manager_cert = "etc/sslmanager.cert";
+        ssl_manager_key = "etc/sslmanager.key";
+        ssl_auto_negotiate = false;
+      }
+      // lib.optionalAttrs (cfg.auth.agentCa != null) {
+        ssl_agent_ca = credentialPaths.authAgentCa;
+      }
+    ) (settingsRuntime.resolve cfg.auth.settings)
   );
 in
 pkgs.writeText "ossec.conf" ''

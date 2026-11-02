@@ -19,21 +19,22 @@ let
     "active-response"
     "vulnerability-detection"
     "cluster"
+    "labels"
+    "agent-upgrade"
+    "fluent-forward"
+    "ms-graph"
+    "office365"
+    "socket"
+    "task-manager"
+    "wdb"
+    "gcp-pubsub"
+    "gcp-bucket"
   ];
-  valueType = types.nullOr (
-    types.oneOf [
-      types.str
-      types.int
-      types.bool
-      (types.listOf valueType)
-      (types.attrsOf valueType)
-    ]
-  );
   enabled = value: value == true || value == "yes";
 in
 {
   options.services.wazuh-server.settings = mkOption {
-    type = types.attrsOf valueType;
+    type = import ./settings-type.nix { inherit lib; };
     default = { };
     description = ''
       Structured ossec.conf sections, merged recursively over generated
@@ -60,8 +61,40 @@ in
       };
     };
   };
+  options.services.wazuh-server.secretFiles = mkOption {
+    type = types.attrsOf types.path;
+    default = { };
+    description = ''Runtime files referenced as { _secret = "name"; } in settings or auth.settings. Contents are inserted in the installed ossec.conf only. Use runtime string paths; API principals authorized to read manager configuration can read these values.'';
+  };
+  options.services.wazuh-server.credentialFiles = mkOption {
+    type = types.attrsOf types.path;
+    default = { };
+    description = ''Files copied byte-for-byte at startup to /var/ossec/etc/credentials/<name>. Use { _credential = "name"; } in structured settings to render the installed path. Suitable for JSON service accounts and AWS profile files; contents never enter generated XML.'';
+  };
+  options.services.wazuh-server.auth.settings = mkOption {
+    type = import ./settings-type.nix { inherit lib; };
+    default = { };
+    description = "Additional upstream auth settings, merged over defaults. Service enablement, port, password and TLS file paths use their dedicated options.";
+  };
   config = lib.mkIf cfg.enable {
     assertions = [
+      {
+        assertion = lib.all (name: builtins.match "[A-Za-z0-9_-]+" name != null) (
+          builtins.attrNames cfg.secretFiles ++ builtins.attrNames cfg.credentialFiles
+        );
+        message = "services.wazuh-server secretFiles and credentialFiles names may contain only letters, digits, underscore and hyphen.";
+      }
+      {
+        assertion = lib.all (name: !(builtins.hasAttr name cfg.auth.settings)) [
+          "disabled"
+          "port"
+          "use_password"
+          "ssl_agent_ca"
+          "ssl_manager_cert"
+          "ssl_manager_key"
+        ];
+        message = "Use services.wazuh-server.auth dedicated enable/port/passwordFile/agentCa/tls options for service-owned fields.";
+      }
       {
         assertion = lib.all (section: builtins.elem section sections) (builtins.attrNames cfg.settings);
         message = "services.wazuh-server.settings supports only: ${lib.concatStringsSep ", " sections}. Use dedicated options for managed sections.";
@@ -83,7 +116,8 @@ in
       }
       {
         assertion =
-          !(enabled (cfg.settings.vulnerability-detection.enabled or false)) || cfg.indexer != null;
+          !(enabled (cfg.settings.vulnerability-detection.enabled or false))
+          || (cfg.indexer != null && cfg.indexer.enable);
         message = "services.wazuh-server.settings vulnerability detection requires services.wazuh-server.indexer.";
       }
     ];

@@ -88,9 +88,24 @@ let
         description = "Syslog senders that remoted refuses.";
       };
       queueSize = mkOption {
-        type = types.nullOr types.ints.positive;
+        type = types.nullOr (types.ints.between 1 262144);
         default = null;
         description = "Size of the message queue of a secure listener. null keeps the Wazuh default.";
+      };
+      ridsClosingTime = mkOption {
+        type = types.nullOr (types.strMatching "[0-9]+[smhd]");
+        default = null;
+        description = "Close idle agent RIDS files after this interval; null preserves the upstream default.";
+      };
+      connectionOvertakeTime = mkOption {
+        type = types.nullOr (types.ints.between 0 3600);
+        default = null;
+        description = "Seconds before a new TCP connection may replace an inactive connection using the same agent key.";
+      };
+      allowHigherVersions = mkOption {
+        type = types.nullOr types.bool;
+        default = null;
+        description = "Accept agents newer than the manager on a secure listener; null preserves the upstream default.";
       };
     };
   };
@@ -100,7 +115,7 @@ let
     {
       options = {
         name = mkOption {
-          type = types.enum knownIntegrations;
+          type = types.strMatching "(slack|virustotal|pagerduty|shuffle|maltiverse|custom-[A-Za-z0-9_-]+)";
           default = name;
           defaultText = literalExpression "<name>";
           description = ''
@@ -192,6 +207,11 @@ let
 in
 {
   options.services.wazuh-server = {
+    integrationScripts = mkOption {
+      type = types.attrsOf types.path;
+      default = { };
+      description = "Python scripts for custom-* integration programs. Keys are executable names; scripts run through the same credential and log-redaction wrapper as packaged integrations.";
+    };
     remote.listeners = mkOption {
       type = types.nonEmptyListOf listener;
       default = [
@@ -299,6 +319,24 @@ in
       in
       [
         {
+          assertion = all (name: builtins.match "custom-[A-Za-z0-9_-]+" name != null) (
+            attrNames cfg.integrationScripts
+          );
+          message = "services.wazuh-server.integrationScripts keys must be custom-* program names.";
+        }
+        {
+          assertion = all (i: elem i.name knownIntegrations || hasAttr i.name cfg.integrationScripts) (
+            attrValues cfg.integrations
+          );
+          message = "Each custom integration needs a matching services.wazuh-server.integrationScripts entry.";
+        }
+        {
+          assertion = all (
+            l: l.connection == "secure" || (l.ridsClosingTime == null && l.allowHigherVersions == null)
+          ) cfg.remote.listeners;
+          message = "RIDS timing and allowHigherVersions apply only to secure listeners.";
+        }
+        {
           # src/config/remote-config.c returns DUP_SECURE for a second one.
           assertion = length secure <= 1;
           message = "services.wazuh-server.remote.listeners: remoted accepts at most one secure listener.";
@@ -322,7 +360,12 @@ in
         {
           # remote.port feeds only the default listener list. A host that
           # sets both would silently lose remote.port.
-          assertion = !(remoteOpts.port.isDefined && remoteOpts.port.highestPrio < 1500 && remoteOpts.listeners.highestPrio < 1500);
+          assertion =
+            !(
+              remoteOpts.port.isDefined
+              && remoteOpts.port.highestPrio < 1500
+              && remoteOpts.listeners.highestPrio < 1500
+            );
           message = "services.wazuh-server: set remote.listeners or remote.port, not both.";
         }
       ]
@@ -341,15 +384,25 @@ in
         let
           # OS_IntegratorD in src/os_integrator/integrator.c disables an
           # integration that lacks what its program reads.
-          needsHook = elem i.name [ "slack" "shuffle" "maltiverse" ];
-          needsKey = elem i.name [ "virustotal" "pagerduty" "maltiverse" ];
+          needsHook = elem i.name [
+            "slack"
+            "shuffle"
+            "maltiverse"
+          ];
+          needsKey = elem i.name [
+            "virustotal"
+            "pagerduty"
+            "maltiverse"
+          ];
           hasHook = i.hookUrl != null || i.hookUrlFile != null;
           hasKey = i.apiKeyFile != null;
         in
         {
           assertion = (needsHook -> hasHook) && (needsKey -> hasKey);
           message = "services.wazuh-server.integrations.${key}: ${i.name} needs ${
-            concatStringsSep " and " (optional needsHook "hookUrl or hookUrlFile" ++ optional needsKey "apiKeyFile")
+            concatStringsSep " and " (
+              optional needsHook "hookUrl or hookUrlFile" ++ optional needsKey "apiKeyFile"
+            )
           }.";
         }
       ) cfg.integrations;

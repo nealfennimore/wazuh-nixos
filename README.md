@@ -1288,3 +1288,56 @@ The generator places command definitions before response rules, as Wazuh
 resolves command names while it reads the configuration. Enabling a rule
 still requires the permissions described under `activeResponse.enable`;
 the renderer does not grant firewall or account-management privileges.
+
+### Manager reference extensions
+
+The module targets the packaged Wazuh 4.14.8 readers. Native sections can use
+`settings` with upstream element names, including `labels`, `agent-upgrade`,
+`fluent-forward`, `ms-graph`, `office365`, `socket`, `task-manager`, `wdb`,
+`gcp-pubsub` and `gcp-bucket`. The documentation heading “wazuh-db” corresponds
+to the XML element `wdb`. Wodle names remain attributes, for example
+`settings.wodle = [{ _attributes.name = "aws-s3"; disabled = true; }];`.
+
+| Option | Default | Purpose |
+|---|---|---|
+| `secretFiles` | `{ }` | Named runtime source files for element-text secrets. Refer with `{ _secret = "name"; }` in `settings` or `auth.settings`. |
+| `credentialFiles` | `{ }` | Named opaque files copied at activation to `/var/ossec/etc/credentials/<name>`, root:wazuh 0640. Refer with `{ _credential = "name"; }`. |
+| `auth.settings` | `{ }` | Additional upstream auth fields, including force policy, ciphers, verification and timing. Cannot replace service-owned port, enable or credential paths. |
+| `indexer.enable` | `true` | Enable the inventory indexer connector; independent of Filebeat alert shipping. |
+| `indexer.tls.additionalCas` | `[ ]` | Additional CA files installed for the connector and Filebeat. |
+| `remote.listeners.*.ridsClosingTime` | `null` | Secure listener RID file closing interval. |
+| `remote.listeners.*.connectionOvertakeTime` | `null` | Connection takeover delay in seconds, 0–3600. |
+| `remote.listeners.*.allowHigherVersions` | `null` | Whether a secure listener accepts newer agents. |
+| `integrationScripts` | `{ }` | Python script paths keyed by `custom-*` integration name. Scripts use the packaged Python interpreter and the existing secret-redaction bootstrap. |
+
+For example:
+
+```nix
+services.wazuh-server = {
+  secretFiles.office = "/run/keys/office-client-secret";
+  credentialFiles.google = "/run/keys/google-service-account.json";
+  settings.office365.api_auth = {
+    tenant_id = "tenant-id";
+    client_id = "client-id";
+    client_secret = { _secret = "office"; };
+  };
+  settings.gcp-pubsub.credentials_file = { _credential = "google"; };
+};
+```
+
+Supply the remaining required upstream fields for each collector. Secret source
+paths must be runtime strings outside the Nix store. Inline secret references
+are refused in XML attributes and in `wodle`, `localfile`, `command`, `gcp-pubsub`, and `gcp-bucket`, where
+upstream may expose text in subprocess arguments. Use collector credential files
+or profiles there. Opaque credential files preserve whitespace and JSON bytes;
+inline secrets follow the manager's existing single-line validation. Resolved
+inline secrets are present in the installed configuration and visible to API
+users allowed to read it. They are absent from the generated store configuration.
+
+When AWS, Azure, Google Cloud or Docker collectors are configured, the module
+installs real, root-owned collector code below `/var/ossec/wodles`. AWS, Azure
+and Google Cloud databases use `/var/ossec/var/wodles`, keeping writable state
+separate from code. External API availability, account permissions and collector
+configuration remain host responsibilities. Docker monitoring also requires
+access to the host's Docker socket; the module does not grant that access
+implicitly. Custom integrations currently support Python scripts only.

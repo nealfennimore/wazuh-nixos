@@ -44,6 +44,11 @@ let
   # and the setup unit writes wazuh-readable copies here.
   credentialPaths = {
     indexerCa = "${stateDir}/etc/indexer-ca.pem";
+    indexerAdditionalCas =
+      if cfg.indexer == null then
+        [ ]
+      else
+        imap0 (n: _: "${stateDir}/etc/indexer-ca-${toString n}.pem") cfg.indexer.tls.additionalCas;
     indexerCertificate = "${stateDir}/etc/indexer.pem";
     indexerKey = "${stateDir}/etc/indexer.key";
     authAgentCa = "${stateDir}/etc/agent-ca.pem";
@@ -73,13 +78,37 @@ let
       "indexer-username" = cfg.indexer.usernameFile;
       "indexer-password" = cfg.indexer.passwordFile;
     }
-    // mapAttrs' (id: s: nameValuePair "secret-${id}" s.source) runtime.secrets;
+    // optionalAttrs (cfg.indexer != null) (
+      listToAttrs (
+        imap0 (n: source: nameValuePair "indexer-ca-${toString n}" source) cfg.indexer.tls.additionalCas
+      )
+    )
+    // mapAttrs' (id: s: nameValuePair "secret-${id}" s.source) allSecrets
+    // mapAttrs' (id: source: nameValuePair "file-${id}" source) cfg.credentialFiles;
 
   # The listeners, integrations and GitHub module (runtime.nix). The XML is
   # placed by generate-server-config.nix; this file runs what it needs.
   runtime = import ./runtime-config.nix { inherit cfg lib; };
-  argvSecrets = filterAttrs (_: s: s.target == "argv") runtime.secrets;
-  configSecrets = filterAttrs (_: s: s.target == "config") runtime.secrets;
+  settingsRuntime = import ./settings-runtime.nix { inherit cfg lib; };
+  cloudWodleNames = [
+    "aws-s3"
+    "azure-logs"
+    "docker-listener"
+  ];
+  configuredWodles = cfg.settings.wodle or [ ];
+  cloudWodlesEnabled =
+    cfg.settings ? gcp-pubsub
+    || cfg.settings ? gcp-bucket
+    || any (w: isAttrs w && elem (w._attributes.name or "") cloudWodleNames) (
+      if isList configuredWodles then configuredWodles else [ configuredWodles ]
+    );
+  cloudWodles = import ./cloud-wodles.nix {
+    inherit pkgs;
+    package = pkg;
+  };
+  allSecrets = runtime.secrets // settingsRuntime.secrets;
+  argvSecrets = filterAttrs (_: s: s.target == "argv") allSecrets;
+  configSecrets = filterAttrs (_: s: s.target == "config") allSecrets;
   lowPortListeners = filter (l: l.port < 1024) cfg.remote.listeners;
 
   # Where integration secrets live for integration-secrets.py. Readable by
@@ -153,11 +182,11 @@ let
   linkedPackageDirs = [
     "bin"
     "lib"
-    "wodles"
     "framework"
     "agentless"
     "templates"
-  ];
+  ]
+  ++ optional (!cloudWodlesEnabled) "wodles";
 
   # Package trees that a chrooting daemon reads. Real copies, refreshed on
   # every activation so an upgrade replaces them.
@@ -208,6 +237,9 @@ let
     "var/multigroups"
     "var/upgrade"
     "var/wodles"
+    "var/wodles/aws"
+    "var/wodles/azure"
+    "var/wodles/gcloud"
     "var/download"
     "var/incoming"
     "var/selinux"
@@ -271,16 +303,33 @@ let
     # inside it could be planted by the wazuh group between the rm and the
     # cp, and cp -R would follow a planted symlink. mv -T replaces a planted
     # symlink instead of following it and fails on a planted directory.
-    ${concatMapStringsSep "\n" (dir:
-      let staging = "${stateDir}/.${replaceStrings [ "/" ] [ "-" ] dir}.new"; in ''
-      rm -rf ${staging}
-      cp -R --no-preserve=ownership,mode ${pkg}/${dir} ${staging}
-      chown -R root:${wazuhGroup} ${staging}
-      find ${staging} -type d -exec chmod 0750 {} +
-      find ${staging} -type f -exec chmod 0640 {} +
-      rm -rf ${stateDir}/${dir}
-      mv -T ${staging} ${stateDir}/${dir}
-    '') copiedPackageDirs}
+    ${concatMapStringsSep "\n" (
+      dir:
+      let
+        staging = "${stateDir}/.${replaceStrings [ "/" ] [ "-" ] dir}.new";
+      in
+      ''
+        rm -rf ${staging}
+        cp -R --no-preserve=ownership,mode ${pkg}/${dir} ${staging}
+        chown -R root:${wazuhGroup} ${staging}
+        find ${staging} -type d -exec chmod 0750 {} +
+        find ${staging} -type f -exec chmod 0640 {} +
+        rm -rf ${stateDir}/${dir}
+        mv -T ${staging} ${stateDir}/${dir}
+      ''
+    ) copiedPackageDirs}
+
+    ${optionalString cloudWodlesEnabled ''
+      # The wrappers and Python modules derive home from their real path.
+      # Copy code as root; only the relocated var/wodles state is writable.
+      rm -rf ${stateDir}/.wodles.new
+      cp -R --no-preserve=ownership,mode ${cloudWodles} ${stateDir}/.wodles.new
+      chown -R root:${wazuhGroup} ${stateDir}/.wodles.new
+      find ${stateDir}/.wodles.new -type d -exec chmod 0750 {} +
+      find ${stateDir}/.wodles.new -type f -exec chmod 0750 {} +
+      rm -rf ${stateDir}/wodles
+      mv -T ${stateDir}/.wodles.new ${stateDir}/wodles
+    ''}
 
     # integrations: a real copy, not a store link. The packaged scripts find
     # logs/ and queue/sockets/ from dirname(dirname(realpath(__file__)))
@@ -297,6 +346,11 @@ let
       name=$(basename "$script" .py)
       rm -f ${stateDir}/integrations.new/"$name"
     done
+    ${concatStringsSep "\n" (
+      mapAttrsToList (name: source: ''
+        install -m 0640 -o root -g ${wazuhGroup} ${source} ${stateDir}/integrations.new/${name}.py
+      '') cfg.integrationScripts
+    )}
     ${concatMapStringsSep "\n" (
       name:
       "install -m 0750 -o root -g ${wazuhGroup} ${integrationWrapper name} ${stateDir}/integrations.new/${name}"
@@ -337,9 +391,15 @@ let
         ${stateDir}/queue/syscollector/norm_config.json
     fi
 
-    chown -R ${wazuhUser}:${wazuhGroup} ${concatStringsSep " " (map (dir: "${stateDir}/${dir}") stateDirs)}
-    find ${concatStringsSep " " (map (dir: "${stateDir}/${dir}") stateDirs)} -type d -exec chmod 0750 {} +
-    find ${concatStringsSep " " (map (dir: "${stateDir}/${dir}") stateDirs)} -type f -exec chmod 0640 {} +
+    chown -R ${wazuhUser}:${wazuhGroup} ${
+      concatStringsSep " " (map (dir: "${stateDir}/${dir}") stateDirs)
+    }
+    find ${
+      concatStringsSep " " (map (dir: "${stateDir}/${dir}") stateDirs)
+    } -type d -exec chmod 0750 {} +
+    find ${
+      concatStringsSep " " (map (dir: "${stateDir}/${dir}") stateDirs)
+    } -type f -exec chmod 0640 {} +
 
     # etc: sticky and root-owned. authd creates client.keys in it, and the
     # host-owned subtrees belong to wazuh because the API edits rules, lists
@@ -383,7 +443,7 @@ let
     # find one exits with "(2301): Definition not found".
     install -m 0640 -o root -g ${wazuhGroup} ${pkg}/etc/internal_options.conf ${stateDir}/etc/internal_options.conf
     ${
-      if runtime.secrets == { } then
+      if allSecrets == { } then
         ''
           install -m 0640 -o root -g ${wazuhGroup} ${generatedConfig} ${stateDir}/etc/ossec.conf
           rm -rf ${secretsDir}
@@ -452,6 +512,31 @@ let
         ''
     }
 
+    # Opaque credentials (JSON keys, profile files, PEMs) are not XML text.
+    # Stage under the root-only home and preserve their bytes. No writable
+    # code path or shell argument receives their contents.
+    ${
+      if cfg.credentialFiles == { } then
+        ''
+          rm -rf ${stateDir}/etc/credentials
+        ''
+      else
+        ''
+          credentialStaging=$(mktemp -d ${stateDir}/.wazuh-credentials.XXXXXX)
+          trap 'rm -rf "$credentialStaging"' EXIT
+          install -d -m 0750 -o root -g ${wazuhGroup} "$credentialStaging/files"
+          ${concatStringsSep "\n" (
+            mapAttrsToList (id: _: ''
+              install -m 0640 -o root -g ${wazuhGroup} "$CREDENTIALS_DIRECTORY/file-${id}" "$credentialStaging/files/${id}"
+            '') cfg.credentialFiles
+          )}
+          rm -rf ${stateDir}/etc/credentials
+          mv -T "$credentialStaging/files" ${stateDir}/etc/credentials
+          rm -rf "$credentialStaging"
+          trap - EXIT
+        ''
+    }
+
     # glibc reads /etc/localtime once, relative to the root of the process.
     # Inside the chroot that is this file, which is why the upstream
     # installer copies it (inst-functions.sh, InstallCommon). NixOS creates
@@ -509,6 +594,11 @@ let
     ''}
     ${optionalString (cfg.indexer != null) ''
       install -m 0640 -o ${wazuhUser} -g ${wazuhGroup} "$CREDENTIALS_DIRECTORY/indexer-ca" ${credentialPaths.indexerCa}
+      ${concatStringsSep "\n" (
+        imap0 (n: destination: ''
+          install -m 0640 -o ${wazuhUser} -g ${wazuhGroup} "$CREDENTIALS_DIRECTORY/indexer-ca-${toString n}" ${destination}
+        '') credentialPaths.indexerAdditionalCas
+      )}
       install -m 0640 -o ${wazuhUser} -g ${wazuhGroup} "$CREDENTIALS_DIRECTORY/indexer-cert" ${credentialPaths.indexerCertificate}
       install -m 0600 -o ${wazuhUser} -g ${wazuhGroup} "$CREDENTIALS_DIRECTORY/indexer-key" ${credentialPaths.indexerKey}
 
@@ -670,7 +760,8 @@ let
     "backup"
   ];
 
-  writablePathsFor = unit: map (dir: "${stateDir}/${dir}") (sharedWritableDirs ++ (unit.writable or [ ]));
+  writablePathsFor =
+    unit: map (dir: "${stateDir}/${dir}") (sharedWritableDirs ++ (unit.writable or [ ]));
 
   apiWritable = {
     writable = [
@@ -910,12 +1001,22 @@ in
       type = types.nullOr (
         types.submodule {
           options = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Enable the manager inventory indexer connector. Filebeat alert shipping is controlled separately.";
+            };
             hosts = mkOption {
               type = types.listOf types.str;
               example = [ "https://indexer:9200" ];
               description = "Indexer URLs.";
             };
             tls = {
+              additionalCas = mkOption {
+                type = types.listOf types.path;
+                default = [ ];
+                description = "Additional trusted CA certificate files, loaded at runtime for both the indexer connector and filebeat.";
+              };
               ca = mkOption {
                 type = types.path;
                 description = "CA the indexer certificates chain to.";
@@ -1092,26 +1193,24 @@ in
           "/run/wrappers"
         ];
         environment.WAZUH_HOME = stateDir;
-        serviceConfig =
-          hardening
-          // {
-            Type = "exec";
-            User = wazuhUser;
-            Group = wazuhGroup;
-            WorkingDirectory = "${stateDir}/";
-            # Its own configuration, plus the etc subtrees the API edits:
-            # uploaded rules, decoders and lists, and the group
-            # configurations under etc/shared.
-            ReadWritePaths = writablePathsFor apiWritable;
-            NoExecPaths = writablePathsFor apiWritable;
-            # Difference from the daemons: uvloop, cffi and the cryptography
-            # bindings are untested under this restriction. Off until
-            # checks.server proves it on.
-            MemoryDenyWriteExecute = false;
-            ExecStart = "${pkg}/framework/python/bin/python3 ${pkg}/api/scripts/wazuh_apid.py -f";
-            Restart = "on-failure";
-            RestartSec = 5;
-          };
+        serviceConfig = hardening // {
+          Type = "exec";
+          User = wazuhUser;
+          Group = wazuhGroup;
+          WorkingDirectory = "${stateDir}/";
+          # Its own configuration, plus the etc subtrees the API edits:
+          # uploaded rules, decoders and lists, and the group
+          # configurations under etc/shared.
+          ReadWritePaths = writablePathsFor apiWritable;
+          NoExecPaths = writablePathsFor apiWritable;
+          # Difference from the daemons: uvloop, cffi and the cryptography
+          # bindings are untested under this restriction. Off until
+          # checks.server proves it on.
+          MemoryDenyWriteExecute = false;
+          ExecStart = "${pkg}/framework/python/bin/python3 ${pkg}/api/scripts/wazuh_apid.py -f";
+          Restart = "on-failure";
+          RestartSec = 5;
+        };
       };
     };
   };
