@@ -25,7 +25,15 @@ pkgs.testers.runNixOSTest {
         use_source_ip = true;
         purge = false;
       };
+      remote.listeners = [{
+        connection = "secure";
+        port = 1514;
+        ridsClosingTime = "5m";
+        connectionOvertakeTime = 10;
+        allowHigherVersions = false;
+      }];
       settings = {
+        socket = { name = "reference"; location = "/var/ossec/queue/sockets/reference"; mode = "udp"; };
         localfile = [
           {
             location = "/var/log/reference-auth.log";
@@ -94,7 +102,7 @@ pkgs.testers.runNixOSTest {
     start_all()
     server.wait_for_unit("wazuh-server.target")
     with subtest("native readers accept the additional sections"):
-        for daemon in ["analysisd", "modulesd", "authd", "db"]:
+        for daemon in ["analysisd", "modulesd", "authd", "db", "remoted", "logcollector"]:
             server.succeed(f"cd /var/ossec && WAZUH_HOME=/var/ossec ./bin/wazuh-{daemon} -t")
     with subtest("credentials are installed at runtime with restrictive ownership"):
         server.succeed("cmp /run/reference-credential /var/ossec/etc/credentials/google")

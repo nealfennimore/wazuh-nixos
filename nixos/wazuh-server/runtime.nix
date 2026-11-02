@@ -93,7 +93,7 @@ let
         description = "Size of the message queue of a secure listener. null keeps the Wazuh default.";
       };
       ridsClosingTime = mkOption {
-        type = types.nullOr (types.strMatching "[0-9]+[smhd]");
+        type = types.nullOr (types.strMatching "[1-9][0-9]*[sSmMhHdD]?");
         default = null;
         description = "Close idle agent RIDS files after this interval; null preserves the upstream default.";
       };

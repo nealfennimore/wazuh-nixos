@@ -101,14 +101,14 @@ in
       }
       {
         assertion = !(enabled (cfg.settings.global.email_notification or false));
-        message = "services.wazuh-server does not run maild; email_notification must remain disabled.";
+        message = "Use services.wazuh-server.email.enable to run maild; raw settings.global.email_notification must remain disabled.";
       }
       {
         assertion =
           !(cfg.settings ? cluster)
           || cfg.settings.cluster == null
           || enabled (cfg.settings.cluster.disabled or false);
-        message = "services.wazuh-server does not run clusterd; a configured cluster must have disabled = true.";
+        message = "Use services.wazuh-server.cluster for clustering; raw settings.cluster must have disabled = true.";
       }
       {
         assertion = !(cfg.settings ? active-response) || cfg.activeResponse.enable;
