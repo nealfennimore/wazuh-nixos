@@ -374,16 +374,29 @@ let
     # find one exits with "(2301): Definition not found".
     install -m 0640 -o root -g ${wazuhGroup} ${pkg}/etc/internal_options.conf ${stateDir}/etc/internal_options.conf
     ${
-      if configSecrets == { } then
-        "install -m 0640 -o root -g ${wazuhGroup} ${generatedConfig} ${stateDir}/etc/ossec.conf"
+      if runtime.secrets == { } then
+        ''
+          install -m 0640 -o root -g ${wazuhGroup} ${generatedConfig} ${stateDir}/etc/ossec.conf
+          rm -rf ${secretsDir}
+        ''
       else
         ''
+          # Secrets. etc belongs to the wazuh group and is writable for it,
+          # so a predictable name in etc could be a link that wazuh planted.
+          # Every file that holds a secret is written in a fresh directory
+          # under /var/ossec, which only root can write, and then renamed
+          # into etc. rename(2) replaces a planted link instead of following
+          # it.
+          ${secretRule}
+          staging=$(mktemp -d ${stateDir}/.wazuh-server-setup.XXXXXX)
+          trap 'rm -rf "$staging"' EXIT
+
           # The generated file holds @WAZUH_SECRET_<id>@ tokens for the
           # secrets that a daemon reads from ossec.conf itself. The values
           # go into the installed copy only. index() and substr() treat the
           # value as text, so no character in it is special.
-          ${secretRule}
-          install -m 0600 -o root -g root ${generatedConfig} ${stateDir}/etc/ossec.conf.new
+          cp ${generatedConfig} "$staging/ossec.conf"
+          chmod 0600 "$staging/ossec.conf"
           ${concatStringsSep "\n" (
             mapAttrsToList (id: _: ''
               value=$(read_secret ${id})
@@ -397,35 +410,38 @@ let
                   }
                   print out $0
                 }
-              ' ${stateDir}/etc/ossec.conf.new > ${stateDir}/etc/ossec.conf.tmp
-              mv ${stateDir}/etc/ossec.conf.tmp ${stateDir}/etc/ossec.conf.new
-              if grep -qF ${escapeShellArg (runtime.token id)} ${stateDir}/etc/ossec.conf.new; then
+              ' "$staging/ossec.conf" > "$staging/ossec.conf.next"
+              mv "$staging/ossec.conf.next" "$staging/ossec.conf"
+              if grep -qF ${escapeShellArg (runtime.token id)} "$staging/ossec.conf"; then
                 echo "wazuh-server-setup: token for ${id} left in ossec.conf" >&2
                 exit 1
               fi
             '') configSecrets
           )}
-          chown root:${wazuhGroup} ${stateDir}/etc/ossec.conf.new
-          chmod 0640 ${stateDir}/etc/ossec.conf.new
-          mv ${stateDir}/etc/ossec.conf.new ${stateDir}/etc/ossec.conf
+
+          # Integration secrets, for integration-secrets.py. The directory
+          # is rebuilt on every activation, so a removed integration loses
+          # its file.
+          install -d -m 0750 -o root -g ${wazuhGroup} "$staging/secrets"
+          ${concatStringsSep "\n" (
+            mapAttrsToList (id: _: ''
+              value=$(read_secret ${id})
+              (umask 0077; printf '%s\n' "$value" > "$staging/secrets/${id}")
+              chown root:${wazuhGroup} "$staging/secrets/${id}"
+              chmod 0640 "$staging/secrets/${id}"
+            '') argvSecrets
+          )}
+
+          # Every secret is valid. Install both.
+          chown root:${wazuhGroup} "$staging/ossec.conf"
+          chmod 0640 "$staging/ossec.conf"
+          mv -T "$staging/ossec.conf" ${stateDir}/etc/ossec.conf
+          rm -rf ${secretsDir}
+          mv -T "$staging/secrets" ${secretsDir}
+          rm -rf "$staging"
+          trap - EXIT
         ''
     }
-
-    # Integration secrets, for integration-secrets.py. Rewritten on every
-    # activation, so a removed integration loses its file.
-    rm -rf ${secretsDir}
-    ${optionalString (argvSecrets != { }) ''
-      ${optionalString (configSecrets == { }) secretRule}
-      install -d -m 0750 -o root -g ${wazuhGroup} ${secretsDir}
-      ${concatStringsSep "\n" (
-        mapAttrsToList (id: _: ''
-          value=$(read_secret ${id})
-          (umask 0077; printf '%s\n' "$value" > ${secretsDir}/${id})
-          chown root:${wazuhGroup} ${secretsDir}/${id}
-          chmod 0640 ${secretsDir}/${id}
-        '') argvSecrets
-      )}
-    ''}
 
     # glibc reads /etc/localtime once, relative to the root of the process.
     # Inside the chroot that is this file, which is why the upstream

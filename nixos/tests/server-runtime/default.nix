@@ -62,6 +62,8 @@ pkgs.testers.runNixOSTest {
       services.wazuh-server = {
         enable = true;
         openFirewall = true;
+        # The archive shows whether a syslog message arrived at all.
+        logAll = true;
         remote.listeners = [
           {
             connection = "secure";
@@ -141,18 +143,25 @@ pkgs.testers.runNixOSTest {
     with subtest("a syslog message reaches the Slack webhook through integratord"):
         server.wait_for_unit("hook-receiver.service")
         sender.wait_for_unit("multi-user.target")
-        # sshd authentication failure: rule 5716, level 5. Sent until the
-        # receiver has a request, because UDP gives no delivery signal.
-        for _ in range(60):
+        # The test hosts file also maps server to an IPv6 address, and the
+        # syslog listener binds IPv4. UDP gives no error for a port that no
+        # one listens on, so the sender names the IPv4 address.
+        server_ipv4 = sender.succeed("getent ahostsv4 server | head -n1 | cut -d' ' -f1").strip()
+        # sshd login attempt with an unknown user: rule 5710, level 5. It is
+        # sent until its alert reaches the receiver, because UDP gives no
+        # delivery signal and other alerts can reach the webhook first.
+        for _ in range(24):
             sender.succeed(
-                "logger --rfc3164 --udp -n server -P 514 -t sshd --id=4242 "
+                f"logger --rfc3164 --udp -n {server_ipv4} -P 514 -t sshd --id=4242 "
                 + shlex.quote("Failed password for invalid user admin from 192.168.1.77 port 4242 ssh2")
             )
-            status, _ = server.execute("grep -qF ${hookPath} /var/lib/hook/requests")
+            status, _ = server.execute("grep -F ${hookPath} /var/lib/hook/requests | grep -qE '57(10|16) _\\(Level'")
             if status == 0:
                 break
             server.sleep(5)
-        server.succeed("grep -F ${hookPath} /var/lib/hook/requests | grep -q 5716")
+        print(sender.succeed("getent ahosts server"))
+        print(server.execute("iptables -L nixos-fw -v -n | grep 514; ss -uanp | grep 514; cat /var/lib/hook/requests; grep -h sshd /var/ossec/logs/archives/archives.log; grep -h -E 'syslog|remoted' /var/ossec/logs/ossec.log | tail -20")[1])
+        server.succeed("grep -F ${hookPath} /var/lib/hook/requests | grep -qE '57(10|16) _\\(Level'")
 
     with subtest("secrets are where they belong and nowhere else"):
         # The GitHub token is in the installed ossec.conf, as wazuh-modulesd
@@ -182,9 +191,9 @@ pkgs.testers.runNixOSTest {
         # A failing request: the receiver goes away, so requests raises with
         # the URL path, which integratord copies to ossec.log.
         server.succeed("systemctl stop hook-receiver.service")
-        for _ in range(60):
+        for _ in range(24):
             sender.succeed(
-                "logger --rfc3164 --udp -n server -P 514 -t sshd --id=4243 "
+                f"logger --rfc3164 --udp -n {server_ipv4} -P 514 -t sshd --id=4243 "
                 + shlex.quote("Failed password for invalid user root from 192.168.1.78 port 4243 ssh2")
             )
             status, _ = server.execute("grep -q 'Unable to run integration for slack' /var/ossec/logs/ossec.log")
@@ -201,5 +210,15 @@ pkgs.testers.runNixOSTest {
         server.fail("systemctl restart wazuh-server-setup.service")
         server.succeed("journalctl -u wazuh-server-setup.service | grep -q 'secret github-api_auth-0-api_token must be one line'")
         server.succeed("grep -qF ${githubToken} /var/ossec/etc/ossec.conf")
+        # A bad integration secret leaves the installed secrets in place.
+        server.succeed("printf '%s\\n' '${githubToken}' > /run/secrets/wazuh-github-token")
+        server.succeed("printf '%s\\n' 'http://127.0.0.1:8099/bad path' > /run/secrets/wazuh-slack-hook")
+        server.fail("systemctl restart wazuh-server-setup.service")
+        server.succeed("journalctl -u wazuh-server-setup.service | grep -q 'secret integration-slack-hook_url must be one line'")
+        server.succeed("grep -qxF ${hookUrl} /var/ossec/etc/secrets/integration-slack-hook_url")
+        server.succeed("grep -qxF ${vtKey} /var/ossec/etc/secrets/integration-virustotal-api_key")
+        server.succeed("grep -qF ${githubToken} /var/ossec/etc/ossec.conf")
+        # No staging directory is left behind.
+        server.fail("ls -d /var/ossec/.wazuh-server-setup.*")
   '';
 }
