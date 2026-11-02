@@ -2,12 +2,13 @@
 # integrations that wazuh-integratord runs, and the GitHub audit-log module.
 #
 # runtime-config.nix writes their ossec.conf blocks. default.nix runs the
-# units, opens the firewall and puts the secrets into ossec.conf.
+# units, opens the firewall and installs secrets in their runtime files.
 #
 # Secrets. Every *File option names a file that PID 1 reads through
 # LoadCredential on the setup unit, so the file can be root-owned and stays
 # out of the Nix store. The generated ossec.conf in the store holds a
-# placeholder; the setup unit writes the secret into /var/ossec/etc/ossec.conf.
+# placeholder. Setup substitutes GitHub tokens in the runtime ossec.conf;
+# integration secrets go into etc/secrets for the in-process wrapper.
 # The Wazuh XML reader does not decode entities (src/os_xml/os_xml.c), so a
 # secret is not escaped. The setup unit refuses a secret that the reader or
 # integratord would change: see secretRule in default.nix.
@@ -184,7 +185,7 @@ let
       apiTokenFile = mkOption {
         type = types.path;
         example = "/run/secrets/wazuh-github-token";
-        description = "File with a GitHub token that can read the audit log, one line. Read by PID 1 through LoadCredential.";
+        description = "File with a GitHub token that can read the audit log, one line. Read by PID 1 through LoadCredential. The installed token is readable by API users authorized to read the manager configuration.";
       };
     };
   };
@@ -236,9 +237,10 @@ in
       '';
       description = ''
         Integrations, one <integration> block each. A non-empty set runs
-        wazuh-integratord. integratord passes the API key and the hook URL
-        to the integration program as arguments, so every local user who
-        can list processes can read them while a request runs.
+        wazuh-integratord. It passes placeholder tokens as arguments;
+        the module's wrapper resolves file-backed secrets inside Python,
+        keeping their values out of process arguments and redacting the
+        upstream integration log and error output.
       '';
     };
 
