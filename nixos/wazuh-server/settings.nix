@@ -30,7 +30,6 @@ let
     ]
   );
   enabled = value: value == true || value == "yes";
-  disabled = value: value == true || value == "yes";
 in
 {
   options.services.wazuh-server.settings = mkOption {
@@ -75,8 +74,12 @@ in
         assertion =
           !(cfg.settings ? cluster)
           || cfg.settings.cluster == null
-          || disabled (cfg.settings.cluster.disabled or false);
+          || enabled (cfg.settings.cluster.disabled or false);
         message = "services.wazuh-server does not run clusterd; a configured cluster must have disabled = true.";
+      }
+      {
+        assertion = !(cfg.settings ? active-response) || cfg.activeResponse.enable;
+        message = "services.wazuh-server.settings.active-response requires activeResponse.enable; use that option to disable responses.";
       }
       {
         assertion =

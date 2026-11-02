@@ -89,6 +89,27 @@ let
       { active-response.disabled = true; }
   );
   settings = lib.recursiveUpdate defaults cfg.settings;
+  # ReadConfig processes sections in document order. Active responses look
+  # up an already-read command, so alphabetical attribute order is invalid.
+  sectionOrder = [
+    "global"
+    "alerts"
+    "logging"
+    "rootcheck"
+    "wodle"
+    "sca"
+    "syscheck"
+    "command"
+    "active-response"
+    "localfile"
+    "ruleset"
+    "rule_test"
+    "cluster"
+    "vulnerability-detection"
+  ];
+  renderedSettings = lib.concatMapStrings (
+    name: xml.element name (settings.${name} or null)
+  ) sectionOrder;
   indexer = xml.element "indexer" (
     if cfg.indexer == null then
       { enabled = false; }
@@ -124,7 +145,7 @@ let
 in
 pkgs.writeText "ossec.conf" ''
   <ossec_config>
-  ${xml.render settings}
+  ${renderedSettings}
   ${runtime.remote}
   ${indexer}
   ${auth}

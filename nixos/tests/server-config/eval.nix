@@ -8,8 +8,8 @@ let
   inherit (pkgs) lib;
   xml = import ../../wazuh-server/xml.nix { inherit lib; };
   fails = value: !(builtins.tryEval (builtins.deepSeq value value)).success;
-  host =
-    settings:
+  hostConfig =
+    options:
     (nixpkgs.lib.nixosSystem {
       system = pkgs.stdenv.hostPlatform.system;
       modules = [
@@ -17,8 +17,8 @@ let
         {
           services.wazuh-server = {
             enable = true;
-            inherit settings;
-          };
+          }
+          // options;
           boot.loader.grub.enable = false;
           fileSystems."/" = {
             device = "none";
@@ -28,7 +28,17 @@ let
         }
       ];
     }).config;
-  rejected = settings: lib.any (a: !a.assertion) (host settings).assertions;
+  rejected = settings: lib.any (a: !a.assertion) (hostConfig { inherit settings; }).assertions;
+  disabledResponse = hostConfig {
+    activeResponse.enable = false;
+    settings.active-response = [
+      {
+        command = "firewall-drop";
+        location = "local";
+        level = 16;
+      }
+    ];
+  };
   example =
     (nixpkgs.lib.nixosSystem {
       system = pkgs.stdenv.hostPlatform.system;
@@ -96,25 +106,29 @@ assert rejected { remote.port = 514; };
 assert rejected { global.email_notification = true; };
 assert rejected { cluster.disabled = false; };
 assert rejected { vulnerability-detection.enabled = true; };
+assert lib.any (a: !a.assertion) disabledResponse.assertions;
 assert lib.all (a: a.assertion) example.assertions;
-pkgs.runCommand "wazuh-server-config-eval" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-  python3 - ${exampleConfig} <<'PY'
-  import sys
-  import xml.etree.ElementTree as ET
-  root = ET.parse(sys.argv[1]).getroot()
-  assert len(root.findall('remote')) == 2
-  assert root.findtext("remote[connection='syslog']/port") == '514'
-  assert root.findtext('global/agents_disconnection_time') == '10m'
-  assert len(root.findall('global')) == 1
-  assert len(root.findall('integration')) == 2
-  assert root.findtext('github/api_auth/org_name') == 'xnor-software'
-  assert root.findtext('github/api_auth/api_token').startswith('@WAZUH_SECRET_')
-  assert root.findtext('indexer/enabled') == 'yes'
-  assert root.findtext('vulnerability-detection/enabled') == 'yes'
-  assert root.findtext('auth/use_password') == 'yes'
-  assert root.findtext('syscheck/auto_ignore') == 'no'
-  assert root.find("wodle[@name='syscollector']/ports").get('all') == 'no'
-  assert root.findtext("localfile[location='journald']/log_format") == 'journald'
-  PY
-  touch "$out"
-''
+pkgs.runCommand "wazuh-server-config-eval"
+  { nativeBuildInputs = [ pkgs.python3 ] ++ example.services.wazuh-server.path; }
+  ''
+    for command in df netstat sed sort last; do command -v "$command"; done
+    python3 - ${exampleConfig} <<'PY'
+    import sys
+    import xml.etree.ElementTree as ET
+    root = ET.parse(sys.argv[1]).getroot()
+    assert len(root.findall('remote')) == 2
+    assert root.findtext("remote[connection='syslog']/port") == '514'
+    assert root.findtext('global/agents_disconnection_time') == '10m'
+    assert len(root.findall('global')) == 1
+    assert len(root.findall('integration')) == 2
+    assert root.findtext('github/api_auth/org_name') == 'xnor-software'
+    assert root.findtext('github/api_auth/api_token').startswith('@WAZUH_SECRET_')
+    assert root.findtext('indexer/enabled') == 'yes'
+    assert root.findtext('vulnerability-detection/enabled') == 'yes'
+    assert root.findtext('auth/use_password') == 'yes'
+    assert root.findtext('syscheck/auto_ignore') == 'no'
+    assert root.find("wodle[@name='syscollector']/ports").get('all') == 'no'
+    assert root.findtext("localfile[location='journald']/log_format") == 'journald'
+    PY
+    touch "$out"
+  ''

@@ -17,6 +17,17 @@ pkgs.testers.runNixOSTest {
         };
         # Exercise scan completion quickly rather than scanning the VM store.
         syscheck.directories = [ "/etc/wazuh-fixture" ];
+        # ReadActiveResponses resolves command names immediately; this must
+        # be rendered after the generated command definitions. Level 16
+        # keeps the response from running for this test's ordinary events.
+        active-response = [
+          {
+            command = "firewall-drop";
+            location = "local";
+            level = 16;
+            timeout = 60;
+          }
+        ];
         localfile = [
           {
             log_format = "journald";
@@ -63,6 +74,8 @@ pkgs.testers.runNixOSTest {
     assert len(root.findall('wodle')) == 3
     assert len(root.findall('localfile')) == 3
     assert root.findtext('cluster/disabled') == 'yes'
+    sections = [element.tag for element in root]
+    assert sections.index('command') < sections.index('active-response')
     PY""")
         server.succeed("test -s /var/ossec/etc/rootcheck/rootkit_files.txt")
         server.succeed("test -s /var/ossec/etc/rootcheck/rootkit_trojans.txt")
