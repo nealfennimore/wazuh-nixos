@@ -3,7 +3,7 @@
 pkgs.testers.runNixOSTest {
   name = "wazuh-server-config";
   globalTimeout = 1800;
-  nodes.server = { lib, pkgs, ... }: {
+  nodes.server = { config, lib, pkgs, ... }: {
     imports = [ wazuhServerModule ];
     virtualisation.memorySize = 3072;
     virtualisation.cores = 2;
@@ -50,11 +50,29 @@ pkgs.testers.runNixOSTest {
       ];
     };
     users.users.wazuh.extraGroups = [ "systemd-journal" ];
+    # Model the older layout that linked etc to the immutable package.
+    # Setup must replace the link before installing rootcheck data.
+    systemd.services.wazuh-legacy-layout = {
+      requiredBy = [ "wazuh-server-setup.service" ];
+      before = [ "wazuh-server-setup.service" ];
+      serviceConfig = { Type = "oneshot"; RemainAfterExit = true; };
+      script = ''
+        install -d /var/ossec
+        ln -s ${config.services.wazuh-server.package}/etc /var/ossec/etc
+        touch /run/wazuh-legacy-layout-planted
+      '';
+    };
     environment.etc."wazuh-fixture/canary".text = "initial content";
     environment.systemPackages = [ pkgs.python3 ];
   };
   testScript = ''
     start_all()
+    with subtest("setup migrates the old store-linked etc directory"):
+        server.wait_for_unit("wazuh-legacy-layout.service")
+        server.succeed("test -e /run/wazuh-legacy-layout-planted")
+        server.succeed("systemctl start wazuh-server-setup.service")
+        server.succeed("test -d /var/ossec/etc && test ! -L /var/ossec/etc")
+        server.succeed("test $(stat -c %U:%G:%a /var/ossec/etc) = root:wazuh:1770")
     server.wait_for_unit("wazuh-server.target")
     for daemon in ["db", "analysisd", "remoted", "syscheckd", "logcollector", "modulesd"]:
         server.wait_for_unit(f"wazuh-{daemon}.service")
