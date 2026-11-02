@@ -685,6 +685,45 @@ store unless the row says otherwise. PID 1 reads each `*File` option through
 | `github.onlyFutureEvents` | `true` | Reads only events after the first start. `false` also reads the existing log. |
 | `github.eventType` | `"all"` | The event types to read: `all`, `git` or `web`. |
 | `settings` | `{ }` | Structured XML sections merged over generated defaults; lists replace repeated elements. See the structured configuration example below. |
+| `email.enable` | `false` | Runs `wazuh-maild` and turns on `email_notification`. |
+| `email.smtpServer` | `null` | The SMTP relay that `maild` connects to on port 25. `maild` has no SMTP authentication and no TLS. Set `smtpServer` or `sendmail`, not both. |
+| `email.sendmail` | `null` | A sendmail-compatible program, for example `msmtp`. The module runs it as `sendmail -t -i`. It must work without setuid. |
+| `email.from` | none | The sender address. |
+| `email.to` | none | The default recipients. |
+| `email.replyTo` | `null` | The Reply-To address. |
+| `email.heloServer` | `null` | The name that `maild` sends in HELO. |
+| `email.maxPerHour` | `12` | The maximum number of messages per hour. |
+| `email.idsName` | `null` | The manager name in the message header. |
+| `email.logSource` | `"alerts.log"` | The alert file that `maild` reads: `alerts.log` or `alerts.json`. |
+| `emailAlerts` | `[ ]` | Extra recipients for selected alerts, one `<email_alerts>` block each. Needs `email.enable`. |
+| `emailAlerts.*.to` | none | The recipients. |
+| `emailAlerts.*.level` | `null` | The minimum alert level. |
+| `emailAlerts.*.groups` | `[ ]` | Rule groups. Empty means every group. |
+| `emailAlerts.*.ruleIds` | `[ ]` | Rule IDs. Empty means every rule. |
+| `emailAlerts.*.eventLocation` | `null` | The alert location. |
+| `emailAlerts.*.format` | `"full"` | `full` or `sms`. |
+| `emailAlerts.*.doNotDelay` | `false` | Sends each alert at once. |
+| `emailAlerts.*.doNotGroup` | `false` | Sends each alert in its own message. |
+| `reports` | `[ ]` | Daily reports that `wazuh-monitord` mails, one `<reports>` block each. Needs `email.enable`. |
+| `reports.*.title` | `null` | The subject of the report. |
+| `reports.*.emailTo` | none | The recipients. |
+| `reports.*.group` | `null` | The rule group to report on. |
+| `reports.*.category` | `null` | The rule category to report on. |
+| `reports.*.rule` | `null` | The rule ID to report on. |
+| `reports.*.level` | `null` | The minimum alert level to report on. |
+| `reports.*.location` | `null` | The alert location to report on. |
+| `reports.*.srcip` | `null` | The source address to report on. |
+| `reports.*.user` | `null` | The user name to report on. |
+| `reports.*.showLogs` | `false` | Includes the logs in the report. |
+| `syslogOutput` | `[ ]` | Syslog servers that receive alerts, one `<syslog_output>` block each. A non-empty list runs `wazuh-csyslogd`. |
+| `syslogOutput.*.server` | none | The address or host name of the syslog server. |
+| `syslogOutput.*.port` | `514` | The UDP port. |
+| `syslogOutput.*.level` | `null` | The minimum alert level. |
+| `syslogOutput.*.group` | `null` | The rule group. Separate several groups with `\|`. |
+| `syslogOutput.*.ruleIds` | `[ ]` | Rule IDs. Empty means every rule. |
+| `syslogOutput.*.location` | `null` | The alert location. |
+| `syslogOutput.*.useFqdn` | `false` | Sends the full host name. |
+| `syslogOutput.*.format` | `"default"` | `default`, `cef`, `splunk` or `json`. |
 | `extraConfig` | `""` | XML appended inside `<ossec_config>`. |
 | `path` | `[ ]` | Packages added to the daemons' PATH, for command readers and integrations. |
 
@@ -758,6 +797,38 @@ permission to update the configuration, it masks only `authd.pass` and
 every API user who can read the manager configuration can read the GitHub
 token. The integration secrets are not in `ossec.conf`, so the API does not
 return them.
+
+### Send alerts by e-mail and to a syslog server
+
+`email.enable` runs `wazuh-maild`. `maild` speaks plain SMTP on port 25,
+without authentication and without TLS. For a relay that needs either, run
+a local relay or use `email.sendmail` with a program such as `msmtp`.
+`emailAlerts` adds recipients for selected alerts. `reports` defines daily
+reports that `wazuh-monitord` builds and mails after midnight.
+
+`syslogOutput` runs `wazuh-csyslogd`, which sends selected alerts over UDP.
+
+```nix
+services.wazuh-server = {
+  email = {
+    enable = true;
+    smtpServer = "127.0.0.1";
+    from = "wazuh@example.com";
+    to = [ "soc@example.com" ];
+  };
+  emailAlerts = [ { to = [ "oncall@example.com" ]; level = 10; doNotDelay = true; } ];
+  syslogOutput = [ { server = "192.168.1.3"; level = 7; format = "json"; } ];
+};
+```
+
+The upstream reference defines `email_alert_level` as the minimum alert
+level for an e-mail. The generated default is 12. To mail lower levels, set
+`settings.alerts.email_alert_level`. The VM check sets it to 5.
+
+`database_output` is not available. Wazuh removed it upstream: version
+4.14.8 has no `wazuh-dbd` and ignores the block with a deprecation warning.
+The module refuses the block, so that a host does not expect alerts in a
+database.
 
 ### Enroll an agent against the server
 

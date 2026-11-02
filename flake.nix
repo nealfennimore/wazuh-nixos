@@ -171,6 +171,9 @@
         # Slack integration against a local webhook, and the secret handling
         # for integrations and the GitHub module, in two VMs.
         checks.server-runtime = import ./nixos/tests/server-runtime { inherit pkgs wazuhServerModule; };
+        # wazuh-maild against a local SMTP receiver and wazuh-csyslogd
+        # against a local UDP receiver, in one VM.
+        checks.server-optional = import ./nixos/tests/server-optional { inherit pkgs wazuhServerModule; };
         # filebeat OSS 7.10.2, the shipper the upstream server package
         # installs. nixpkgs filebeat7 is the licensed build and refuses the
         # indexer (GET /_license on connect).

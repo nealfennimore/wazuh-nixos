@@ -9,6 +9,8 @@ let
   inherit (pkgs) lib;
   xml = import ./xml.nix { inherit lib; };
   runtime = import ./runtime-config.nix { inherit cfg lib; };
+  # email, email_alerts, reports and syslog_output (optional-services.nix).
+  optionalServices = import ./optional-services-config.nix { inherit cfg pkgs; };
   command = name: executable: {
     inherit name executable;
     timeout_allowed = true;
@@ -88,7 +90,7 @@ let
     else
       { active-response.disabled = true; }
   );
-  settings = lib.recursiveUpdate defaults cfg.settings;
+  settings = lib.recursiveUpdate (lib.recursiveUpdate defaults { global = optionalServices.global; }) cfg.settings;
   # ReadConfig processes sections in document order. Active responses look
   # up an already-read command, so alphabetical attribute order is invalid.
   sectionOrder = [
@@ -150,7 +152,7 @@ pkgs.writeText "ossec.conf" ''
   ${indexer}
   ${auth}
   ${runtime.integrations}
-  ${runtime.github}
+  ${runtime.github}${optionalServices.blocks}
   ${cfg.extraConfig}
   </ossec_config>
 ''

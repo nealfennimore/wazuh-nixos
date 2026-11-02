@@ -73,13 +73,19 @@ let
       "indexer-username" = cfg.indexer.usernameFile;
       "indexer-password" = cfg.indexer.passwordFile;
     }
-    // mapAttrs' (id: s: nameValuePair "secret-${id}" s.source) runtime.secrets;
+    // mapAttrs' (id: s: nameValuePair "secret-${id}" s.source) allSecrets;
 
   # The listeners, integrations and GitHub module (runtime.nix). The XML is
   # placed by generate-server-config.nix; this file runs what it needs.
   runtime = import ./runtime-config.nix { inherit cfg lib; };
-  argvSecrets = filterAttrs (_: s: s.target == "argv") runtime.secrets;
-  configSecrets = filterAttrs (_: s: s.target == "config") runtime.secrets;
+  # email, emailAlerts, reports and syslogOutput (optional-services.nix).
+  optionalServices = import ./optional-services-config.nix { inherit cfg pkgs; };
+  # Every secret that the setup unit installs, by id. Each source names
+  # its target: "argv" for integration-secrets.py, "config" for a value
+  # that a daemon reads from ossec.conf.
+  allSecrets = runtime.secrets // optionalServices.secrets;
+  argvSecrets = filterAttrs (_: s: s.target == "argv") allSecrets;
+  configSecrets = filterAttrs (_: s: s.target == "config") allSecrets;
   lowPortListeners = filter (l: l.port < 1024) cfg.remote.listeners;
 
   # Where integration secrets live for integration-secrets.py. Readable by
@@ -383,7 +389,7 @@ let
     # find one exits with "(2301): Definition not found".
     install -m 0640 -o root -g ${wazuhGroup} ${pkg}/etc/internal_options.conf ${stateDir}/etc/internal_options.conf
     ${
-      if runtime.secrets == { } then
+      if allSecrets == { } then
         ''
           install -m 0640 -o root -g ${wazuhGroup} ${generatedConfig} ${stateDir}/etc/ossec.conf
           rm -rf ${secretsDir}
@@ -533,9 +539,9 @@ let
   '';
 
   # The daemons, in the order src/init/wazuh-server.sh starts them, minus
-  # the ones this revision does not run: maild, clusterd, agentlessd and
-  # csyslogd (all optional upstream). execd is conditional on
-  # activeResponse.enable and integratord on integrations, below.
+  # the ones this revision does not run: clusterd and agentlessd (optional
+  # upstream). execd is conditional on activeResponse.enable, integratord
+  # on integrations, maild on email.enable and csyslogd on syslogOutput.
   #
   # chroot: the daemon calls chroot(home) after reading its configuration.
   # writable: state outside the four shared trees that this daemon writes.
@@ -659,6 +665,24 @@ let
       after = [ "wazuh-analysisd.service" ];
       serviceConfig.MemoryDenyWriteExecute = false;
     };
+  }
+  // optionalAttrs cfg.email.enable {
+    # maild reads the alert file and mails what <email_alerts> and the
+    # alert level select. With a relay host it resolves the name, then
+    # calls chroot(home) (src/os_maild/maild.c:176-196), so it gets the
+    # chroot capability. With sendmail it stays outside the chroot and runs
+    # the wrapper that optional-services-config.nix writes.
+    wazuh-maild = {
+      chroot = cfg.email.smtpServer != null;
+      after = [ "wazuh-analysisd.service" ];
+    };
+  }
+  // optionalAttrs (cfg.syslogOutput != [ ]) {
+    # csyslogd reads the alert file and sends each selected alert over UDP.
+    # It does not chroot (src/os_csyslogd/main.c).
+    wazuh-csyslogd = {
+      after = [ "wazuh-analysisd.service" ];
+    };
   };
 
   sharedWritableDirs = [
@@ -777,6 +801,8 @@ in
     ./api-users.nix
     # remote.listeners, integrations and github.
     ./runtime.nix
+    # email, emailAlerts, reports and syslogOutput.
+    ./optional-services.nix
     # Alert shipping. It reads services.wazuh-server.indexer and declares
     # services.wazuh-server.filebeat; the arguments are the static values
     # its unit shares with the daemons.
