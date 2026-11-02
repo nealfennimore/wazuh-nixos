@@ -158,7 +158,6 @@ modules and fails when an option is missing from its table.
 | `activeResponse.capability.host-deny.enable` | `false` | Append the offending address to `/etc/hosts.deny`. Needs that file writable by `wazuh`. |
 | `activeResponse.capability.firewalld-drop.enable` | `services.firewalld.enable` | Add the offending address to the firewalld drop list through a polkit rule. |
 | `activeResponse.capability.disable-account.enable` | `false` | Lock the offending account with `passwd -l`. Runs `wazuh-execd` as root. |
-| `settings` | `{ }` | Structured XML sections merged over generated defaults; lists replace repeated elements. See the structured configuration example below. |
 | `extraConfig` | `""` | XML appended to the generated `ossec.conf`. |
 | `config` | `null` | The complete `ossec.conf`. Replaces the generated file. |
 | `path` | see module | Packages on the PATH of the daemons. |
@@ -1180,3 +1179,9 @@ inputs: setup copies them into Wazuh's runtime directory.
 `nix build .#checks.x86_64-linux.server-config` checks the merged configuration
 with the native Wazuh readers, waits for each monitoring scan to finish,
 and proves journald and command events reach the manager archive.
+
+Structured `active-response` blocks require `activeResponse.enable = true`.
+The generator places command definitions before response rules, as Wazuh
+resolves command names while it reads the configuration. Enabling a rule
+still requires the permissions described under `activeResponse.enable`;
+the renderer does not grant firewall or account-management privileges.
