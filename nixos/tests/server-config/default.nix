@@ -65,7 +65,7 @@ pkgs.testers.runNixOSTest {
     environment.etc."wazuh-fixture/canary".text = "initial content";
     environment.systemPackages = [ pkgs.python3 ];
   };
-  testScript = ''
+  testScript = { nodes, ... }: ''
     start_all()
     with subtest("setup migrates the old store-linked etc directory"):
         server.wait_for_unit("wazuh-legacy-layout.service")
@@ -116,5 +116,29 @@ pkgs.testers.runNixOSTest {
                 f"grep -q '{marker}' /var/ossec/logs/archives/archives.json", timeout=120
             )
         server.fail("journalctl -b | grep -E 'status=31/SYS|code=killed, status=SYS'")
+
+    with subtest("a name planted inside etc during the copy cannot redirect the rootcheck install"):
+        # etc is 1770, so the wazuh group can create names in it between any
+        # two commands of the setup script. Plant a wazuh-owned link at the
+        # name the old loop staged in, right before the copy, by instrumenting
+        # a copy of the generated setup script. A link planted before setup
+        # runs proves nothing: the loop's own rm -rf removes it. The anchor
+        # must match exactly once, or the plant lands nowhere.
+        setup = "${nodes.server.systemd.services.wazuh-server-setup.serviceConfig.ExecStart}"
+        anchor = "cp -R --no-preserve=ownership,mode ${nodes.server.services.wazuh-server.package}/etc/rootcheck "
+        plant = (
+            "ln -s /var/lib/wazuh-attacker /var/ossec/etc/rootcheck.new && "
+            "chown -h wazuh:wazuh /var/ossec/etc/rootcheck.new"
+        )
+        server.succeed("install -d -m 0770 -o wazuh -g wazuh /var/lib/wazuh-attacker")
+        server.succeed(f"install -m 0700 {setup} /root/setup-instrumented")
+        server.succeed(f"test \"$(grep -cF '{anchor}' /root/setup-instrumented)\" = 1")
+        server.succeed(f"sed -i '\\|{anchor}|i {plant}' /root/setup-instrumented")
+        server.succeed(f"test \"$(grep -cF '{plant}' /root/setup-instrumented)\" = 1")
+        server.succeed("WAZUH_HOME=/var/ossec /root/setup-instrumented")
+        server.succeed("test -d /var/ossec/etc/rootcheck && test ! -L /var/ossec/etc/rootcheck")
+        server.succeed("test \"$(stat -c %U:%G:%a /var/ossec/etc/rootcheck)\" = root:wazuh:750")
+        server.succeed("test -s /var/ossec/etc/rootcheck/rootkit_files.txt")
+        server.succeed("test -z \"$(ls -A /var/lib/wazuh-attacker)\"")
   '';
 }
