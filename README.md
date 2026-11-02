@@ -714,7 +714,10 @@ active while one child runs, and systemd restarts it when the last child
 exits. If one listener stops while another runs, systemd does not restart
 it. The upstream `wazuh-control` behaves the same way.
 
-A secret never goes into the Nix store. The generated `ossec.conf` holds a
+The module reads secret-file contents only at runtime. Use quoted runtime
+paths (for example `"/run/keys/slack-hook"`), not Nix path literals or
+`pkgs.writeText`, which would put the source secret in the store.
+The generated `ossec.conf` holds a
 token such as `@WAZUH_SECRET_integration-slack-hook_url@` in place of each
 secret. `wazuh-server-setup.service` then puts each value where its reader
 needs it:
