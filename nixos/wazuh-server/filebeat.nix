@@ -110,7 +110,12 @@ let
           username = "\${INDEXER_USERNAME}";
           password = "\${INDEXER_PASSWORD}";
           "ssl.verification_mode" = "full";
-          "ssl.certificate_authorities" = [ "\${CREDENTIALS_DIRECTORY}/indexer-ca" ];
+          "ssl.certificate_authorities" = [
+            "\${CREDENTIALS_DIRECTORY}/indexer-ca"
+          ]
+          ++ lib.imap0 (
+            n: _: "\${CREDENTIALS_DIRECTORY}/indexer-ca-${toString n}"
+          ) cfg.indexer.tls.additionalCas;
           "ssl.certificate" = "\${CREDENTIALS_DIRECTORY}/indexer-cert";
           "ssl.key" = "\${CREDENTIALS_DIRECTORY}/indexer-key";
         };
@@ -237,7 +242,10 @@ in
           "indexer-key:${toString cfg.indexer.tls.key}"
           "indexer-username:${toString cfg.indexer.usernameFile}"
           "indexer-password:${toString cfg.indexer.passwordFile}"
-        ];
+        ]
+        ++ lib.imap0 (
+          n: source: "indexer-ca-${toString n}:${toString source}"
+        ) cfg.indexer.tls.additionalCas;
         ExecStart = "${start}/bin/wazuh-filebeat-start";
         Restart = "on-failure";
         RestartSec = 5;

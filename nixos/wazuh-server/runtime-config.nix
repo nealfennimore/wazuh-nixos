@@ -40,11 +40,18 @@ let
     + element "connection" l.connection
     + element "port" l.port
     + element "protocol" (concatStringsSep "," l.protocol)
-    + element "ipv6" (yesNo (if l.ipv6 != null then l.ipv6 else l.connection == "secure" && cfg.listenIPv6))
+    + element "ipv6" (
+      yesNo (if l.ipv6 != null then l.ipv6 else l.connection == "secure" && cfg.listenIPv6)
+    )
     + element "local_ip" l.localIp
     + concatMapStrings (ip: element "allowed-ips" ip) l.allowedIps
     + concatMapStrings (ip: element "denied-ips" ip) l.deniedIps
     + element "queue_size" l.queueSize
+    + element "rids_closing_time" l.ridsClosingTime
+    + element "connection_overtake_time" l.connectionOvertakeTime
+    + optionalString (l.allowHigherVersions != null) (
+      xml.element "agents" { allow_higher_versions = l.allowHigherVersions; }
+    )
     + "</remote>\n";
 
   # Attribute names sort, so the ids and the block order are stable.
@@ -105,22 +112,37 @@ in
   github = optionalString (cfg.github != null) (github cfg.github);
 
   # id -> { source; target = "argv" | "config"; }
-  secrets =
-    lib.listToAttrs (
-      lib.concatLists (
-        mapAttrsToList (
-          key: i:
-          let
-            s = integrationSecrets key i;
-          in
-          lib.optional (s.hook != null) (lib.nameValuePair s.hook { source = i.hookUrlFile; target = "argv"; })
-          ++ lib.optional (s.key != null) (lib.nameValuePair s.key { source = i.apiKeyFile; target = "argv"; })
-        ) cfg.integrations
-      )
-      ++ lib.optionals (cfg.github != null) (
-        imap0 (n: a: lib.nameValuePair (githubTokenId n) { source = a.apiTokenFile; target = "config"; }) cfg.github.apiAuth
-      )
-    );
+  secrets = lib.listToAttrs (
+    lib.concatLists (
+      mapAttrsToList (
+        key: i:
+        let
+          s = integrationSecrets key i;
+        in
+        lib.optional (s.hook != null) (
+          lib.nameValuePair s.hook {
+            source = i.hookUrlFile;
+            target = "argv";
+          }
+        )
+        ++ lib.optional (s.key != null) (
+          lib.nameValuePair s.key {
+            source = i.apiKeyFile;
+            target = "argv";
+          }
+        )
+      ) cfg.integrations
+    )
+    ++ lib.optionals (cfg.github != null) (
+      imap0 (
+        n: a:
+        lib.nameValuePair (githubTokenId n) {
+          source = a.apiTokenFile;
+          target = "config";
+        }
+      ) cfg.github.apiAuth
+    )
+  );
 
   inherit token;
 }
