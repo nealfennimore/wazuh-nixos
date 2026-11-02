@@ -1403,7 +1403,10 @@ upstream may expose text in subprocess arguments. Use collector credential files
 or profiles there. Opaque credential files preserve whitespace and JSON bytes;
 inline secrets follow the manager's existing single-line validation. Resolved
 inline secrets are present in the installed configuration and visible to API
-users allowed to read it. They are absent from the generated store configuration.
+users allowed to read it. Upstream masks only `authd.pass` and `cluster.key`;
+Office365, MS Graph and similar client secrets are readable by any API principal
+allowed to read manager configuration. They are absent from the generated store
+configuration.
 
 When AWS, Azure, Google Cloud or Docker collectors are configured, the module
 installs real, root-owned collector code below `/var/ossec/wodles`. AWS, Azure
