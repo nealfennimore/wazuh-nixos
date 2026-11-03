@@ -34,12 +34,15 @@ in pkgs.testers.runNixOSTest {
   testScript = ''
     start_all()
     indexer2.wait_until_succeeds("systemctl is-active wazuh-indexer-security.service", timeout=900)
-    indexer2.succeed("curl --fail --silent --cacert ${pki.ca} -u 'admin:Test-password-42!' https://indexer2:9200")
+    # securityadmin can finish before the HTTP authentication backend has
+    # loaded its configuration. Wait for an authenticated request on each
+    # independent node before asserting its bind behavior.
+    indexer2.wait_until_succeeds("curl --fail --silent --show-error --connect-timeout 3 --max-time 10 --cacert ${pki.ca} -u 'admin:Test-password-42!' https://indexer2:9200", timeout=120)
     indexer2.succeed("curl --fail --silent --cacert ${pki.ca} --resolve indexer2:9200:127.0.0.1 -u 'admin:Test-password-42!' https://indexer2:9200")
     indexer.fail("curl --connect-timeout 3 --fail --silent --cacert ${pki.ca} -u 'admin:Test-password-42!' https://indexer2:9200")
     indexer.wait_for_unit("wazuh-indexer.service")
     indexer.wait_until_succeeds("systemctl is-active wazuh-indexer-security.service", timeout=900)
-    indexer2.succeed("curl --fail --silent --cacert ${pki.ca} --resolve indexer:9200:192.168.1.10 -u 'admin:Test-password-42!' https://indexer:9200")
+    indexer2.wait_until_succeeds("curl --fail --silent --show-error --connect-timeout 3 --max-time 10 --cacert ${pki.ca} --resolve indexer:9200:192.168.1.10 -u 'admin:Test-password-42!' https://indexer:9200", timeout=120)
     base = "curl --fail --silent --show-error --cacert ${pki.ca} -u 'admin:Test-password-42!'"
     indexer.wait_until_succeeds(base + " 'https://indexer:9200/_cluster/health?wait_for_status=yellow&timeout=5s' | jq -e '.status == \"yellow\" or .status == \"green\"'")
     indexer.succeed(base + " -H 'Content-Type: application/json' -XPUT 'https://indexer:9200/nixos-test/_doc/1?refresh=true' -d '{\"message\":\"persistent\"}'")
