@@ -1203,9 +1203,25 @@ GitHub Actions builds `wazuh-agent` for both systems, and the server stack
 (`wazuh-server`, `wazuh-indexer`, `wazuh-dashboard`, `filebeat-oss`) for
 `x86_64-linux`, on every push to `main` and to `integration/server-stack`,
 and pushes the results to Cachix. The workflow is
-`.github/workflows/build.yml`. It also runs `checks.agent`, `checks.server`
-and the source-level checks on `x86_64-linux`. It does not run the
-enrollment, integration or multi-VM checks.
+`.github/workflows/build.yml`. Pushes, pull requests and manual dispatches
+all run the five non-VM checks and the 15 VM checks listed in
+`.github/vm-checks/*.txt` on `x86_64-linux`. This includes every manager-reference
+check, container enrollment, native server enrollment, indexing, dashboard,
+and the full stack. Five groups run on separate runners (at most three groups
+at once); Docker-image enrollment has its own group. Within a group, VM checks
+run sequentially, continue after individual
+failures, and fail the job if any check fails. Logs, derivation paths and a
+result summary are uploaded as `vm-check-logs-<group>`, including on failure.
+
+The build jobs export compressed Nix package closures as one-day artifacts.
+The test job imports those exact packages, so fork PRs need no cache-write
+credentials and do not rebuild the manager once per test. The runner frees
+unused toolchains and adds 12 GiB of swap for multi-VM tests; the largest
+test configures about 9 GiB of guest RAM. Low-memory runners may run slowly.
+Each VM group has a six-hour limit. The only excluded flake check is
+`checks.integration`: its upstream agent suite has a 12-hour test limit and
+must run separately on a sufficiently provisioned KVM builder. Live external
+service validation still requires staging credentials and endpoints.
 
 To use the cache, add it to the host that builds the agent:
 

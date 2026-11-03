@@ -15,11 +15,10 @@
 # Pushes to main and to integration/server-stack publish to the cache. Pull
 # requests build but do not push: a pull request from a fork has no secrets.
 #
-# Not run here: checks.enrollment and checks.integration (one pulls a
-# multi-gigabyte image from Docker Hub, the other runs for hours), and the
-# multi-VM checks server-enrollment, server-indexer, indexer, dashboard,
-# dashboard-server and stack (they need 4 to 9 GB of VM memory). Run those
-# with nix build on a builder with KVM.
+# Every bounded flake check runs for pushes, PRs and manual dispatches.
+# checks.integration remains separate: its 12-hour limit exceeds the
+# six-hour hosted job limit. Package closures travel through artifacts,
+# including on fork PRs without cache-write credentials.
 
 name: build
 
@@ -71,7 +70,7 @@ jobs:
       - uses: cachix/cachix-action@v16
         with:
           name: ${{ env.CACHIX_CACHE }}
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          authToken: ${{ github.event_name == 'push' && secrets.CACHIX_AUTH_TOKEN || '' }}
           skipPush: ${{ github.event_name != 'push' }}
 
       - name: Build packages
@@ -83,6 +82,18 @@ jobs:
       - name: Show closure size
         run: |
           nix path-info -S -h .#packages.${{ matrix.system }}.wazuh-agent
+
+      - name: Export agent packages for tests
+        if: matrix.system == 'x86_64-linux'
+        run: bash .github/scripts/export-closure.sh "$RUNNER_TEMP/agent-closure.nar.zst" .#packages.x86_64-linux.wazuh-agent .#packages.x86_64-linux.wazuh-testing
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.system == 'x86_64-linux'
+        with:
+          name: agent-closure
+          path: ${{ runner.temp }}/agent-closure.nar.zst
+          compression-level: 0
+          retention-days: 1
 
   build-server:
     # The server stack is x86_64-linux only: filebeat-oss ships as an x86_64
@@ -107,7 +118,7 @@ jobs:
       - uses: cachix/cachix-action@v16
         with:
           name: ${{ env.CACHIX_CACHE }}
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          authToken: ${{ github.event_name == 'push' && secrets.CACHIX_AUTH_TOKEN || '' }}
           skipPush: ${{ github.event_name != 'push' }}
 
       - name: Build the server stack
@@ -123,12 +134,21 @@ jobs:
       - name: Source-level checks
         # No VM. server-package inspects the built server; options-documented
         # fails when a module option is missing from the READMEs.
+        shell: bash
         run: |
-          nix build -L --no-link \
-            .#checks.x86_64-linux.server-package \
-            .#checks.x86_64-linux.options-documented \
-            .#checks.x86_64-linux.component-evaluation \
-            .#checks.x86_64-linux.component-rendering
+          nix eval --json .#checks.x86_64-linux --apply builtins.attrNames > "$RUNNER_TEMP/check-names.json"
+          python3 .github/scripts/check-coverage.py "$RUNNER_TEMP/check-names.json"
+          mapfile -t checks < .github/non-vm-checks.txt
+          bash .github/scripts/run-checks.sh "$RUNNER_TEMP/source-check-logs" "${checks[@]}"
+
+      - name: Preserve source-check logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-check-logs
+          path: ${{ runner.temp }}/source-check-logs
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Show closure sizes
         run: |
@@ -137,21 +157,39 @@ jobs:
             .#packages.x86_64-linux.wazuh-indexer \
             .#packages.x86_64-linux.wazuh-dashboard
 
+      - name: Export server packages for tests
+        run: bash .github/scripts/export-closure.sh "$RUNNER_TEMP/server-closure.nar.zst" .#packages.x86_64-linux.wazuh-server .#packages.x86_64-linux.wazuh-indexer .#packages.x86_64-linux.wazuh-dashboard .#packages.x86_64-linux.filebeat-oss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-closure
+          path: ${{ runner.temp }}/server-closure.nar.zst
+          compression-level: 0
+          retention-days: 1
+
   test:
-    name: ${{ matrix.check }} (x86_64-linux)
+    name: VM checks / ${{ matrix.group }} (x86_64-linux)
     needs: [build, build-server]
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix:
-        # One VM each. checks.server boots the manager and the API and
-        # reads the server package from the cache that build-server filled.
-        # Select before expansion: job-level if cannot reference matrix.
-        # Other events do not publish packages to the cache, so only pushes
-        # include the server test, which would otherwise rebuild the server.
-        check: ${{ fromJSON(github.event_name == 'push' && '["agent", "server"]' || '["agent"]') }}
+        group: [core, cluster, indexing, stack, container]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Free disk space and provision swap for multi-VM checks
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+          sudo fallocate -l 12G /swapfile-wazuh-ci
+          sudo chmod 600 /swapfile-wazuh-ci
+          sudo mkswap /swapfile-wazuh-ci
+          sudo swapon /swapfile-wazuh-ci
+          free -h
+          df -h /
 
       - name: Enable KVM
         # GitHub's Linux runners expose /dev/kvm, but only root can open it.
@@ -168,14 +206,40 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
             system-features = nixos-test benchmark big-parallel kvm
+            # Only same-run build artifacts are imported, on ephemeral hosts.
+            trusted-users = root runner
 
       - uses: cachix/cachix-action@v16
         with:
           name: ${{ env.CACHIX_CACHE }}
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           # The test VM closure is large and nobody substitutes it. Read the
           # packages from the cache, push nothing.
           skipPush: true
 
-      - name: Run the module test
-        run: nix build -L --no-link .#checks.x86_64-linux.${{ matrix.check }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-closure'
+          merge-multiple: true
+          path: ${{ runner.temp }}/closures
+
+      - name: Import the packages built by this workflow
+        run: |
+          for archive in "$RUNNER_TEMP"/closures/*.nar.zst; do
+            zstd -dc "$archive" | nix-store --import > /dev/null
+            rm "$archive"
+          done
+
+      - name: Run all bounded VM checks sequentially
+        shell: bash
+        run: |
+          mapfile -t checks < ".github/vm-checks/${{ matrix.group }}.txt"
+          bash .github/scripts/run-checks.sh "$RUNNER_TEMP/check-logs" "${checks[@]}"
+
+      - name: Preserve test logs and derivation paths
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-check-logs-${{ matrix.group }}
+          path: ${{ runner.temp }}/check-logs
+          if-no-files-found: warn
+          retention-days: 14
