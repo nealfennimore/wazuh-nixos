@@ -546,59 +546,60 @@ let
           install -d ${stateDir}/etc/${dir}
         fi
       fi
-      chown -R ${wazuhUser}:${wazuhGroup} ${stateDir}/etc/${dir}
-      find ${stateDir}/etc/${dir} -type d -exec chmod 0770 {} +
-      find ${stateDir}/etc/${dir} -type f -exec chmod 0660 {} +
+      # Not the declared ruleset below it: that belongs to root, and
+      # sync_declared owns it.
+      find ${stateDir}/etc/${dir} -path ${stateDir}/etc/${dir}/declared -prune \
+        -o -exec chown -h ${wazuhUser}:${wazuhGroup} {} +
+      find ${stateDir}/etc/${dir} -path ${stateDir}/etc/${dir}/declared -prune \
+        -o -type d -exec chmod 0770 {} +
+      find ${stateDir}/etc/${dir} -path ${stateDir}/etc/${dir}/declared -prune \
+        -o -type f -exec chmod 0660 {} +
     '') hostOwnedEtcDirs}
     install -d -m 0770 -o ${wazuhUser} -g ${wazuhGroup} ${stateDir}/etc/shared/default
 
-    # The declared ruleset (ruleset.nix). etc is 1770, so the wazuh group
-    # can plant the name etc/declared before the first activation. A planted
-    # link is removed, and install -d takes a planted directory for root.
-    # From then on only root writes in etc/declared, so the staging names
-    # are safe inside it.
-    declared=${stateDir}/etc/declared
-    if [ -L "$declared" ] || { [ -e "$declared" ] && [ ! -d "$declared" ]; }; then
-      rm -f "$declared"
-    fi
-    install -d -m 0750 -o root -g ${wazuhGroup} "$declared"
-    for kind in rules decoders; do
-      rm -rf "$declared/.$kind.new"
-      install -d -m 0750 -o root -g ${wazuhGroup} "$declared/.$kind.new"
-      for source in ${cfg.ruleset.tree}/"$kind"/*; do
-        # A link to a host file that is absent stays in the loop, and install
-        # stops the unit on it.
-        [ -e "$source" ] || [ -L "$source" ] || continue
-        install -m 0640 -o root -g ${wazuhGroup} "$source" "$declared/.$kind.new/$(basename "$source")"
+    # The declared ruleset (ruleset.nix), in a subdirectory of each
+    # host-owned directory, because the API finds a rule file only below
+    # etc/rules (wazuh/rbac/utils.py, expand_rules walks RULES_PATH and
+    # USER_RULES_PATH), and the same for decoders and lists.
+    #
+    # The parent belongs to wazuh, so the name `declared` can be planted. A
+    # planted link is removed, install -d takes a planted directory for
+    # root, and the loop removes each entry that the configuration does not
+    # declare. The directory keeps its inode: it is a read-only mount point
+    # in the namespace of the API. A file that did not change keeps its
+    # inode too, and a list keeps its compiled copy, which a running
+    # analysisd reads.
+    sync_declared() {
+      kind=$1
+      mode=$2
+      target=${stateDir}/etc/$kind/declared
+      if [ -L "$target" ] || { [ -e "$target" ] && [ ! -d "$target" ]; }; then
+        rm -f "$target"
+      fi
+      install -d -m "$mode" -o root -g ${wazuhGroup} "$target"
+      for entry in "$target"/* "$target"/.[!.]*; do
+        [ -e "$entry" ] || [ -L "$entry" ] || continue
+        name=$(basename "$entry")
+        if [ -L "$entry" ] || [ -d "$entry" ] || [ ! -e ${cfg.ruleset.tree}/"$kind"/"''${name%.cdb}" ]; then
+          rm -rf "$entry"
+        fi
       done
-      rm -rf "''${declared:?}/$kind"
-      mv -T "$declared/.$kind.new" "$declared/$kind"
-    done
-    # lists: analysisd writes <name>.cdb beside each list, so the wazuh
-    # group can write the directory. The sticky bit keeps it from replacing
-    # the root-owned sources. The directory inode stays because it is a
-    # mount point in the analysisd namespace. A list that did not change
-    # keeps its file and its compiled copy, because a running analysisd
-    # reads the compiled copy.
-    if [ -L "$declared/lists" ] || { [ -e "$declared/lists" ] && [ ! -d "$declared/lists" ]; }; then
-      rm -f "$declared/lists"
-    fi
-    install -d -m 1770 -o root -g ${wazuhGroup} "$declared/lists"
-    for entry in "$declared"/lists/* "$declared"/lists/.[!.]*; do
-      [ -e "$entry" ] || [ -L "$entry" ] || continue
-      name=$(basename "$entry")
-      if [ -L "$entry" ] || [ -d "$entry" ] || [ ! -e ${cfg.ruleset.tree}/lists/"''${name%.cdb}" ]; then
-        rm -rf "$entry"
-      fi
-    done
-    for source in ${cfg.ruleset.tree}/lists/*; do
-      [ -e "$source" ] || [ -L "$source" ] || continue
-      target="$declared/lists/$(basename "$source")"
-      if ! cmp -s "$source" "$target" || [ "$(stat -c %U:%a "$target")" != root:640 ]; then
-        rm -f "$target" "$target.cdb"
-        install -m 0640 -o root -g ${wazuhGroup} "$source" "$target"
-      fi
-    done
+      for source in ${cfg.ruleset.tree}/"$kind"/*; do
+        # A link to a host file that is absent stays in the loop, and
+        # install stops the unit on it.
+        [ -e "$source" ] || [ -L "$source" ] || continue
+        file="$target/$(basename "$source")"
+        if ! cmp -s "$source" "$file" || [ "$(stat -c %U:%a "$file")" != root:640 ]; then
+          rm -f "$file" "$file.cdb"
+          install -m 0640 -o root -g ${wazuhGroup} "$source" "$file"
+        fi
+      done
+    }
+    sync_declared rules 0750
+    sync_declared decoders 0750
+    # analysisd writes <name>.cdb beside each list (lists_make.c). The
+    # sticky bit keeps the wazuh group from replacing the root-owned lists.
+    sync_declared lists 1770
 
     for name in client.keys local_internal_options.conf; do
       if [ -L ${stateDir}/etc/"$name" ]; then
@@ -827,9 +828,12 @@ let
     wazuh-analysisd = {
       chroot = true;
       after = [ "wazuh-db.service" ];
+      # A changed declared ruleset (ruleset.nix) restarts analysisd at the
+      # switch. The start requires the setup unit, which installs the new
+      # files first.
+      restartTriggers = lib.optional declaredRuleset cfg.ruleset.tree;
       writable = [
         "etc/lists"
-        "etc/declared/lists"
         "etc/shared"
       ];
     };
@@ -970,6 +974,7 @@ let
       writable = [ "etc" ];
       serviceConfig = {
         ExecStart = "${pkg}/framework/python/bin/python3 ${pkg}/framework/scripts/wazuh_clusterd.py -f";
+        ReadOnlyPaths = declaredDirs;
         MemoryDenyWriteExecute = false;
       };
     };
@@ -1002,6 +1007,15 @@ let
 
   writablePathsFor =
     unit: map (dir: "${stateDir}/${dir}") (sharedWritableDirs ++ (unit.writable or [ ]));
+
+  # The declared ruleset lies below directories that the API and clusterd
+  # write. A read-only mount keeps them out of it. A more specific path wins
+  # over the ReadWritePaths entry of its parent.
+  declaredDirs = map (kind: "${stateDir}/etc/${kind}/declared") [
+    "rules"
+    "decoders"
+    "lists"
+  ];
 
   apiWritable = {
     writable = [
@@ -1075,6 +1089,7 @@ let
       ]
       ++ unit.after;
       requires = [ "wazuh-server-setup.service" ];
+      restartTriggers = unit.restartTriggers or [ ];
       path = cfg.path ++ (unit.path or [ ]) ++ [
         "/run/current-system/sw"
         "/run/wrappers"
@@ -1453,6 +1468,7 @@ in
           # configurations under etc/shared.
           ReadWritePaths = writablePathsFor apiWritable;
           NoExecPaths = writablePathsFor apiWritable;
+          ReadOnlyPaths = declaredDirs;
           # Difference from the daemons: uvloop, cffi and the cryptography
           # bindings are untested under this restriction. Off until
           # checks.server proves it on.

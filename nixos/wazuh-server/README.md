@@ -530,23 +530,23 @@ The manager reads its ruleset from three places.
 | Directory in `/var/ossec` | Owner | Source |
 |---|---|---|
 | `ruleset/` | the package | The stock ruleset. The setup unit copies it at each activation. |
-| `etc/declared/` | the configuration | The files of `ruleset.rules`, `ruleset.decoders` and `ruleset.lists`. |
+| `etc/rules/declared`, `etc/decoders/declared`, `etc/lists/declared` | the configuration | The files of `ruleset.rules`, `ruleset.decoders` and `ruleset.lists`. |
 | `etc/rules`, `etc/decoders`, `etc/lists` | the host | Files that the API or the dashboard editor writes. The module copies them one time from the package and then does not change them. |
 
 Declare a file by its name:
 
 ```nix
 services.wazuh-server.ruleset = {
-  decoders."local_decoder.xml".source = ./local_decoder.xml;
-  rules."local_rules.xml".text = ''
-    <group name="local,">
+  decoders."my-app_decoders.xml".source = ./my-app_decoders.xml;
+  rules."my-app_rules.xml".text = ''
+    <group name="my-app,">
       <rule id="100100" level="7">
         <decoded_as>my-app</decoded_as>
         <description>Event of my-app.</description>
       </rule>
       <rule id="100101" level="10">
         <if_sid>100100</if_sid>
-        <list field="user" lookup="match_key">etc/declared/lists/blocked-users</list>
+        <list field="user" lookup="match_key">etc/lists/declared/blocked-users</list>
         <description>Event of my-app from a blocked user.</description>
       </rule>
     </group>
@@ -558,19 +558,38 @@ services.wazuh-server.ruleset = {
 ```
 
 The setup unit installs the files as `root:wazuh` with mode `0640`. The
-generated `ossec.conf` loads `etc/declared/decoders` and `etc/declared/rules`
-after the stock directories and the host directories, and it has one `<list>`
-for each declared list. Each `.xml` file in a declared directory loads. The
-name does not have to end in `_rules.xml`. Use rule identifiers from 100000 to
-120000, the range that upstream keeps for custom rules.
+generated `ossec.conf` loads `etc/decoders/declared` and `etc/rules/declared`
+in addition to the stock directories and the host directories, and it has one `<list>`
+for each declared list. Use rule identifiers from 100000 to 120000, the range
+that upstream keeps for custom rules.
 
-A rebuild is the only way to change a declared file. The API has no write
-access to `etc/declared`. A file that leaves the configuration leaves the host
-at the next activation, and `wazuh-analysisd` restarts with the new ruleset.
+The declared files are below the host directories for one reason. The API
+finds a rule file, a decoder file or a list only below `ruleset/` and below
+`etc/rules`, `etc/decoders` and `etc/lists`. The dashboard shows the declared
+files because of this location.
 
-`wazuh-analysisd` compiles each list to `<name>.cdb` in the same directory, so
-`etc/declared/lists` is writable for `wazuh-analysisd`. The sticky bit of the
-directory prevents a replacement of the root-owned list.
+A rebuild is the only way to change a declared file. The declared directories
+are read-only mounts in the units of the API and of `wazuh-clusterd`. A file
+that leaves the configuration leaves the host at the next activation, and
+`wazuh-analysisd` restarts with the new ruleset.
+
+Use a file name only one time. The API identifies a file by its name, without
+its directory. Do not give a declared file the name of a file in the host
+directories. The package puts `local_rules.xml` and `local_decoder.xml` there.
+
+`wazuh-analysisd` compiles each list to `<name>.cdb` in the same directory.
+The sticky bit of `etc/lists/declared` prevents a replacement of the
+root-owned list.
+
+A file that the API or the dashboard uploads to the host directories applies
+only after a restart of `wazuh-analysisd`. The API request
+`PUT /manager/restart`, which is "Restart manager" in the dashboard, restarts
+nothing: the program `active-response/bin/restart.sh` is absent, because
+systemd owns the restarts. Restart the unit on the host:
+
+```sh
+systemctl restart wazuh-analysisd.service
+```
 
 The build of the system loads the declared files with `wazuh-analysisd -t`,
 together with the stock ruleset and the generated `ossec.conf`. If
@@ -580,8 +599,8 @@ which does not load is such a warning: the manager ignores that rule.
 
 The build-time check has three limits:
 
-- It does not see the files in `etc/rules`, `etc/decoders` and `etc/lists` of
-  the host. It uses the package defaults for them.
+- It does not see the files that the API uploaded to the host. It uses the
+  package defaults for the host directories.
 - It does not run when a `source` is a string that names a host file. A build
   cannot read that file.
 - `ruleset.validate = false` stops it.
@@ -589,33 +608,36 @@ The build-time check has three limits:
 In these three cases, an error shows only when `wazuh-analysisd` starts. It
 does not start, and its journal names the file. Correct the file and rebuild.
 
-An identifier must be unique in the three places. If a declared file and an
-uploaded file define the same rule identifier or decoder name,
-`wazuh-analysisd` uses or refuses them as upstream does. The module does not
-compare the directories.
-
 In a cluster, the master sends `etc/rules`, `etc/decoders` and `etc/lists` to
-the workers. It does not send `etc/declared`. Declare the same files on each
-node.
+the workers, with the subdirectories. A worker cannot write its declared
+directories. Declare the same files on each node. No check covers a cluster
+with declared files.
 
 `settings.ruleset` still sets the stock and host directories, `rule_exclude`
-and `decoder_exclude`. The module adds the declared directories after them.
+and `decoder_exclude`. The module adds the declared directories to them.
+
+The position of a directory in `ossec.conf` does not set the load order.
+`wazuh-analysisd` sorts the rule files of all directories by file name, and it
+does the same for the decoder files. A file must sort after each file that it
+depends on. Thus a rule file with `if_sid` on a declared rule needs a name
+that sorts after the name of the declared file, also if the API uploaded it.
+The stock files start with digits and load first.
 
 ```sh
 nix build .#checks.x86_64-linux.server-ruleset-check
 nix build .#checks.x86_64-linux.server-ruleset
 ```
 
-The check boots one VM and writes events to the analysisd queue. It confirms
-that a declared decoder, two declared rule files and a declared list give
-alerts, that the API lists a declared rule and cannot write `etc/declared`,
-and that a rule file uploaded through the API works after a restart of
-`wazuh-analysisd`. It then activates a second configuration and confirms that
-a removed rule file leaves the host, that its rule stops, and that a changed
-list applies.
-
 `server-ruleset-check` needs no VM. It confirms that the build-time check
 accepts a good ruleset and refuses five bad ones.
+
+`server-ruleset` boots one VM and writes events to the analysisd queue. It
+confirms that a declared decoder, two declared rule files and a declared list
+give alerts, that the API lists the declared rules and cannot write the
+declared directories, and that a rule file uploaded through the API works
+after a restart of `wazuh-analysisd`. It then activates a second configuration
+and confirms that a removed rule file leaves the host, that its rule stops,
+and that a changed list applies.
 
 ## Structured server configuration
 

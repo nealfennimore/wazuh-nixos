@@ -152,21 +152,21 @@ assert fails (
 );
 # Declared ruleset files. Without them the <ruleset> section is the default.
 # With them the declared directories come last, also when settings.ruleset
-# replaces the directory lists.
+# replaces the directory lists. The position has no effect on the load order.
 assert rulesetOf { } == rulesetOf { ruleset = { }; };
-assert !(lib.hasInfix "etc/declared" (rulesetOf { }));
-assert lib.hasInfix "<rule_dir>etc/rules</rule_dir>\n<rule_dir pattern=\"\\.xml$\">etc/declared/rules</rule_dir>\n" (rulesetOf {
+assert !(lib.hasInfix "/declared" (rulesetOf { }));
+assert lib.hasInfix "<rule_dir>etc/rules</rule_dir>\n<rule_dir>etc/rules/declared</rule_dir>\n" (rulesetOf {
   ruleset.rules."local_rules.xml".text = "x";
 });
-assert !(lib.hasInfix "etc/declared/decoders" (rulesetOf { ruleset.rules."local_rules.xml".text = "x"; }));
-assert lib.hasInfix "<decoder_dir>etc/decoders</decoder_dir>\n<decoder_dir pattern=\"\\.xml$\">etc/declared/decoders</decoder_dir>\n" (rulesetOf {
+assert !(lib.hasInfix "etc/decoders/declared" (rulesetOf { ruleset.rules."local_rules.xml".text = "x"; }));
+assert lib.hasInfix "<decoder_dir>etc/decoders</decoder_dir>\n<decoder_dir>etc/decoders/declared</decoder_dir>\n" (rulesetOf {
   ruleset.decoders."local_decoder.xml".text = "x";
 });
-assert lib.hasInfix "<list>etc/lists/malicious-ioc/malicious-domains</list>\n<list>etc/declared/lists/a</list>\n<list>etc/declared/lists/b</list>\n" (rulesetOf {
+assert lib.hasInfix "<list>etc/lists/malicious-ioc/malicious-domains</list>\n<list>etc/lists/declared/a</list>\n<list>etc/lists/declared/b</list>\n" (rulesetOf {
   ruleset.lists.b.text = "x";
   ruleset.lists.a.text = "x";
 });
-assert lib.hasInfix "<rule_dir>custom/rules</rule_dir>\n<rule_dir pattern=\"\\.xml$\">etc/declared/rules</rule_dir>\n" (rulesetOf {
+assert lib.hasInfix "<rule_dir>custom/rules</rule_dir>\n<rule_dir>etc/rules/declared</rule_dir>\n" (rulesetOf {
   settings.ruleset.rule_dir = "custom/rules";
   ruleset.rules."local_rules.xml".text = "x";
 });

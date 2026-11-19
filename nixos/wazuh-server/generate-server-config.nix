@@ -91,15 +91,18 @@ let
       { active-response.disabled = true; }
   );
   mergedSettings = lib.recursiveUpdate (lib.recursiveUpdate defaults { global = optionalServices.global; }) settingsRuntime.settings;
-  # The declared files (ruleset.nix). They load after the stock ruleset and
-  # after the host-owned directories, also when settings.ruleset replaces
-  # those. The pattern is explicit: the default for rule_dir accepts only
-  # names that end in _rules.xml.
+  # The declared files (ruleset.nix). The position of a directory in the
+  # lists has no effect on the load order: Read_Rules (src/config/
+  # rules-config.c) collects the files of all directories and then sorts
+  # them by file name. The module appends the declared directories, also
+  # when settings.ruleset replaces the lists. No pattern attribute: the API
+  # framework turns an element with an attribute into a dictionary
+  # (wazuh/core/configuration.py, _read_option) and then cannot list the
+  # directory (wazuh/core/rule.py, _create_rule_decoder_dir_dict). Without
+  # the attribute analysisd loads each .xml file of the directory, and the
+  # API lists the same files.
   declared = cfg.ruleset;
-  declaredDir = kind: {
-    _attributes.pattern = "\\.xml$";
-    _text = "etc/declared/${kind}";
-  };
+  declaredDir = kind: "etc/${kind}/declared";
   withDeclared =
     ruleset:
     let
@@ -108,7 +111,7 @@ let
     ruleset
     // add "decoder_dir" (lib.optional (declared.decoders != { }) (declaredDir "decoders"))
     // add "rule_dir" (lib.optional (declared.rules != { }) (declaredDir "rules"))
-    // add "list" (map (name: "etc/declared/lists/${name}") (builtins.attrNames declared.lists));
+    // add "list" (map (name: "etc/lists/declared/${name}") (builtins.attrNames declared.lists));
   settings = mergedSettings // {
     ruleset = withDeclared (if builtins.isAttrs (mergedSettings.ruleset or null) then mergedSettings.ruleset else { });
   };

@@ -56,7 +56,7 @@ let
     '';
     rules."local_rules.xml".text = rule ''
       <decoded_as>check-app</decoded_as>
-      <list field="user" lookup="match_key">etc/declared/lists/users</list>
+      <list field="user" lookup="match_key">etc/lists/declared/users</list>
     '';
     lists.users.text = ''
       mallory:blocked
@@ -65,7 +65,7 @@ let
   bad = {
     unclosed = {
       ruleset.rules."local_rules.xml".text = "<group name=\"local,\"><rule id=\"100100\" level=\"5\"><match>x</match><description>x</description></rule>";
-      message = "Error reading XML file 'etc/declared/rules/local_rules.xml'";
+      message = "Error reading XML file 'etc/rules/declared/local_rules.xml'";
     };
     unknown-decoder = {
       ruleset.rules."local_rules.xml".text = rule "<decoded_as>no-such-decoder</decoded_as>";
@@ -74,19 +74,19 @@ let
     missing-list = {
       ruleset.rules."local_rules.xml".text = rule ''
         <match>x</match>
-        <list field="user" lookup="match_key">etc/declared/lists/missing</list>
+        <list field="user" lookup="match_key">etc/lists/declared/missing</list>
       '';
-      message = "List 'etc/declared/lists/missing' could not be loaded";
+      message = "List 'etc/lists/declared/missing' could not be loaded";
     };
     bad-decoder = {
       ruleset.decoders."local_decoder.xml".text = "<decoder name=\"check-app\"><parent>no-such-parent</parent><regex>x</regex></decoder>";
-      message = "etc/declared/decoders/local_decoder.xml";
+      message = "etc/decoders/declared/local_decoder.xml";
     };
-    # The name does not end in _rules.xml. A file that the manager skipped
+    # The name does not end in _rules.xml. A file that analysisd skipped
     # would pass.
     other-name = {
       ruleset.rules."other.xml".text = rule "<decoded_as>no-such-decoder</decoded_as>";
-      message = "Error loading the rules: 'etc/declared/rules/other.xml'";
+      message = "Error loading the rules: 'etc/rules/declared/other.xml'";
     };
   };
   refused = lib.mapAttrs (

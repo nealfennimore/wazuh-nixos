@@ -4,17 +4,23 @@
 # The stock ruleset is ruleset/ from the package. etc/rules, etc/decoders and
 # etc/lists belong to the host: the API and the dashboard editor write them,
 # and the module does not change them after their first copy. The files
-# declared here go to a third place, etc/declared, that only root writes:
+# declared here go to a subdirectory of each, which only root writes:
 #
-#   etc/declared/rules      replaced as a whole on every activation
-#   etc/declared/decoders   replaced as a whole on every activation
-#   etc/declared/lists      kept as a directory, entries synchronized
+#   etc/rules/declared
+#   etc/decoders/declared
+#   etc/lists/declared
 #
-# So a file removed from the configuration leaves the host, and the API
-# cannot edit a declared file. analysisd compiles each CDB list beside its
-# source (src/analysisd/lists_make.c), so etc/declared/lists is writable for
-# analysisd, and its inode stays: it is a mount point in the analysisd
-# namespace.
+# They are below the host directories because the API finds a file only
+# there: its access control walks ruleset/rules and etc/rules, and the same
+# for decoders and lists (wazuh/rbac/utils.py, expand_rules). A file in
+# another place loads in analysisd but is absent from the API and the
+# dashboard.
+#
+# The setup unit synchronizes each subdirectory, so a file removed from the
+# configuration leaves the host. A read-only mount in the units of the API
+# and of clusterd keeps them from a change of a declared file. analysisd
+# compiles each CDB list beside its source (src/analysisd/lists_make.c) and
+# can write etc/lists.
 #
 # default.nix installs the tree (the setup unit) and
 # generate-server-config.nix adds the directories to <ruleset>.
@@ -93,8 +99,10 @@ in
     // {
       description = ''
         Rule files, by file name. The setup unit installs them in
-        `/var/ossec/etc/declared/rules`, and the generated `ossec.conf`
-        loads that directory after `ruleset/rules` and `etc/rules`. Use
+        `/var/ossec/etc/rules/declared`, and the generated `ossec.conf`
+        loads that directory. `wazuh-analysisd` loads the rule files of all
+        directories in the order of their file names, so a file must sort
+        after each file whose rules it uses in `if_sid`. Use
         rule identifiers from 100000 to 120000, as upstream requires for
         custom rules. A name must end in `.xml`.
       '';
@@ -104,8 +112,9 @@ in
     // {
       description = ''
         Decoder files, by file name. The setup unit installs them in
-        `/var/ossec/etc/declared/decoders`, and the generated `ossec.conf`
-        loads that directory after `ruleset/decoders` and `etc/decoders`.
+        `/var/ossec/etc/decoders/declared`, and the generated `ossec.conf`
+        loads that directory. The file name sets the load order, as for
+        rules.
         A name must end in `.xml`.
       '';
     };
@@ -119,9 +128,9 @@ in
     // {
       description = ''
         CDB lists, by file name, with one `key:value` on each line. The
-        setup unit installs them in `/var/ossec/etc/declared/lists`, and
+        setup unit installs them in `/var/ossec/etc/lists/declared`, and
         the generated `ossec.conf` has one `<list>` for each. A rule refers
-        to a list as `etc/declared/lists/<name>`. A name must not end in
+        to a list as `etc/lists/declared/<name>`. A name must not end in
         `.cdb`.
       '';
     };

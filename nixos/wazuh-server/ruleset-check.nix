@@ -27,8 +27,11 @@ pkgs.runCommand "wazuh-server-ruleset-check" { } ''
   cp -R ${package}/ruleset "$home/ruleset"
   cp -R ${package}/etc "$home/etc"
   chmod -R u+w "$home"
-  mkdir -p "$home/etc/declared" "$home/logs" "$home/queue/sockets" "$home/var/run" "$home/tmp" "$home/stats"
-  cp -RL ${tree}/. "$home/etc/declared/"
+  mkdir -p "$home/logs" "$home/queue/sockets" "$home/var/run" "$home/tmp" "$home/stats"
+  for kind in rules decoders lists; do
+    mkdir -p "$home/etc/$kind/declared"
+    cp -RL ${tree}/"$kind"/. "$home/etc/$kind/declared/"
+  done
   chmod -R u+w "$home"
   cp ${ossecConf} "$home/etc/ossec.conf"
 
