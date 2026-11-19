@@ -186,6 +186,16 @@ let
 
   generatedConfig = import ./generate-server-config.nix { inherit cfg pkgs credentialPaths; };
 
+  # ruleset-check.nix. system.checks names the result, so a ruleset that
+  # analysisd refuses fails the build of the system.
+  declaredRuleset = cfg.ruleset.rules != { } || cfg.ruleset.decoders != { } || cfg.ruleset.lists != { };
+  rulesetCheck = import ./ruleset-check.nix {
+    inherit pkgs;
+    package = pkg;
+    ossecConf = generatedConfig;
+    tree = cfg.ruleset.tree;
+  };
+
   # api.yaml. JSON is valid YAML, and the API reads it with PyYAML. The key
   # and cert names are relative to api/configuration/ssl
   # (api/api/configuration.py, append_wazuh_prefixes). drop_privileges is
@@ -542,6 +552,54 @@ let
     '') hostOwnedEtcDirs}
     install -d -m 0770 -o ${wazuhUser} -g ${wazuhGroup} ${stateDir}/etc/shared/default
 
+    # The declared ruleset (ruleset.nix). etc is 1770, so the wazuh group
+    # can plant the name etc/declared before the first activation. A planted
+    # link is removed, and install -d takes a planted directory for root.
+    # From then on only root writes in etc/declared, so the staging names
+    # are safe inside it.
+    declared=${stateDir}/etc/declared
+    if [ -L "$declared" ] || { [ -e "$declared" ] && [ ! -d "$declared" ]; }; then
+      rm -f "$declared"
+    fi
+    install -d -m 0750 -o root -g ${wazuhGroup} "$declared"
+    for kind in rules decoders; do
+      rm -rf "$declared/.$kind.new"
+      install -d -m 0750 -o root -g ${wazuhGroup} "$declared/.$kind.new"
+      for source in ${cfg.ruleset.tree}/"$kind"/*; do
+        # A link to a host file that is absent stays in the loop, and install
+        # stops the unit on it.
+        [ -e "$source" ] || [ -L "$source" ] || continue
+        install -m 0640 -o root -g ${wazuhGroup} "$source" "$declared/.$kind.new/$(basename "$source")"
+      done
+      rm -rf "''${declared:?}/$kind"
+      mv -T "$declared/.$kind.new" "$declared/$kind"
+    done
+    # lists: analysisd writes <name>.cdb beside each list, so the wazuh
+    # group can write the directory. The sticky bit keeps it from replacing
+    # the root-owned sources. The directory inode stays because it is a
+    # mount point in the analysisd namespace. A list that did not change
+    # keeps its file and its compiled copy, because a running analysisd
+    # reads the compiled copy.
+    if [ -L "$declared/lists" ] || { [ -e "$declared/lists" ] && [ ! -d "$declared/lists" ]; }; then
+      rm -f "$declared/lists"
+    fi
+    install -d -m 1770 -o root -g ${wazuhGroup} "$declared/lists"
+    for entry in "$declared"/lists/* "$declared"/lists/.[!.]*; do
+      [ -e "$entry" ] || [ -L "$entry" ] || continue
+      name=$(basename "$entry")
+      if [ -L "$entry" ] || [ -d "$entry" ] || [ ! -e ${cfg.ruleset.tree}/lists/"''${name%.cdb}" ]; then
+        rm -rf "$entry"
+      fi
+    done
+    for source in ${cfg.ruleset.tree}/lists/*; do
+      [ -e "$source" ] || [ -L "$source" ] || continue
+      target="$declared/lists/$(basename "$source")"
+      if ! cmp -s "$source" "$target" || [ "$(stat -c %U:%a "$target")" != root:640 ]; then
+        rm -f "$target" "$target.cdb"
+        install -m 0640 -o root -g ${wazuhGroup} "$source" "$target"
+      fi
+    done
+
     for name in client.keys local_internal_options.conf; do
       if [ -L ${stateDir}/etc/"$name" ]; then
         rm ${stateDir}/etc/"$name"
@@ -771,6 +829,7 @@ let
       after = [ "wazuh-db.service" ];
       writable = [
         "etc/lists"
+        "etc/declared/lists"
         "etc/shared"
       ];
     };
@@ -1045,6 +1104,8 @@ in
 {
   imports = [
     ./settings.nix
+    # ruleset.rules, ruleset.decoders and ruleset.lists.
+    ./ruleset.nix
     # api.users and wazuh-api-users.service.
     ./api-users.nix
     # remote.listeners, integrations and github.
@@ -1297,6 +1358,10 @@ in
     };
     users.groups.${wazuhGroup} = { };
 
+    system.checks = optional (
+      declaredRuleset && cfg.ruleset.validate && cfg.ruleset.buildTimeSources
+    ) rulesetCheck;
+
     networking.firewall.allowedTCPPorts = mkIf cfg.openFirewall (
       map (l: l.port) (filter (l: elem "tcp" l.protocol) cfg.remote.listeners)
       ++ [ cfg.api.port ]
@@ -1348,6 +1413,7 @@ in
                   pkgs.coreutils
                   pkgs.findutils
                   pkgs.gawk
+                  pkgs.diffutils
                   pkgs.gnugrep
                 ];
                 text = preStart;

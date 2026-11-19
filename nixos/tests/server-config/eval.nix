@@ -36,6 +36,19 @@ let
       ];
     }).config;
   assertionCases = import ./assertion-cases.nix;
+  # The <ruleset> section that a host with these options gets.
+  rulesetOf =
+    options:
+    let
+      text = (
+        import ../../wazuh-server/generate-server-config.nix {
+          inherit pkgs;
+          cfg = (hostConfig options).services.wazuh-server;
+          credentialPaths = { };
+        }
+      ).text;
+    in
+    builtins.elemAt (builtins.match ".*<ruleset>(.*)</ruleset>.*" text) 0;
   checksAssertion =
     case:
     let
@@ -137,6 +150,26 @@ assert fails (
     };
   }
 );
+# Declared ruleset files. Without them the <ruleset> section is the default.
+# With them the declared directories come last, also when settings.ruleset
+# replaces the directory lists.
+assert rulesetOf { } == rulesetOf { ruleset = { }; };
+assert !(lib.hasInfix "etc/declared" (rulesetOf { }));
+assert lib.hasInfix "<rule_dir>etc/rules</rule_dir>\n<rule_dir pattern=\"\\.xml$\">etc/declared/rules</rule_dir>\n" (rulesetOf {
+  ruleset.rules."local_rules.xml".text = "x";
+});
+assert !(lib.hasInfix "etc/declared/decoders" (rulesetOf { ruleset.rules."local_rules.xml".text = "x"; }));
+assert lib.hasInfix "<decoder_dir>etc/decoders</decoder_dir>\n<decoder_dir pattern=\"\\.xml$\">etc/declared/decoders</decoder_dir>\n" (rulesetOf {
+  ruleset.decoders."local_decoder.xml".text = "x";
+});
+assert lib.hasInfix "<list>etc/lists/malicious-ioc/malicious-domains</list>\n<list>etc/declared/lists/a</list>\n<list>etc/declared/lists/b</list>\n" (rulesetOf {
+  ruleset.lists.b.text = "x";
+  ruleset.lists.a.text = "x";
+});
+assert lib.hasInfix "<rule_dir>custom/rules</rule_dir>\n<rule_dir pattern=\"\\.xml$\">etc/declared/rules</rule_dir>\n" (rulesetOf {
+  settings.ruleset.rule_dir = "custom/rules";
+  ruleset.rules."local_rules.xml".text = "x";
+});
 assert rejected { remote.port = 514; };
 assert (references { }).resolve { _secret = "token"; } == "@WAZUH_SECRET_settings-token@";
 assert (references { }).resolve { _credential = "google"; } == "/var/ossec/etc/credentials/google";

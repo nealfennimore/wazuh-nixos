@@ -33,7 +33,7 @@ that a remote API or an external executable is configured on a host.
 | reports | `reports`, with email configured |
 | rootcheck | `settings.rootcheck` |
 | rule_test | `settings.rule_test` |
-| ruleset | `settings.ruleset` |
+| ruleset | `settings.ruleset` for the directories and exclusions, `ruleset.rules`, `ruleset.decoders` and `ruleset.lists` for the files |
 | sca | `settings.sca` |
 | socket | `settings.socket` |
 | syscheck | `settings.syscheck` |

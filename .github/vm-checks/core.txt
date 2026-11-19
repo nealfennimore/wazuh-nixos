@@ -5,3 +5,4 @@ server-reference
 server-runtime
 server-optional
 server-agentless
+server-ruleset

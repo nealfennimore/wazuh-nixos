@@ -5,3 +5,4 @@ component-evaluation
 component-rendering
 agent-eval
 upgrade-script
+server-ruleset-check

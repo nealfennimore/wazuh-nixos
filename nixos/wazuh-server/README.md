@@ -274,6 +274,13 @@ store unless the row says otherwise. PID 1 reads each `*File` option through
 | `syslogOutput.*.format` | `"default"` | `default`, `cef`, `splunk` or `json`. |
 | `extraConfig` | `""` | XML appended inside `<ossec_config>`. |
 | `path` | `[ ]` | Packages added to the daemons' PATH, for command readers and integrations. |
+| `ruleset.rules.<name>.text` | `null` | Content of the rule file `<name>`. The name must end in `.xml`. Set `text` or `source`. |
+| `ruleset.rules.<name>.source` | `null` | File with the content of the rule file. A Nix path literal goes to the store at build time. A string names a host file that the setup unit reads at each activation. |
+| `ruleset.decoders.<name>.text` | `null` | Content of the decoder file `<name>`. The name must end in `.xml`. Set `text` or `source`. |
+| `ruleset.decoders.<name>.source` | `null` | File with the content of the decoder file. Same rules as for a rule file. |
+| `ruleset.lists.<name>.text` | `null` | Content of the CDB list `<name>`, one `key:value` on each line. The name must not end in `.cdb`. Set `text` or `source`. |
+| `ruleset.lists.<name>.source` | `null` | File with the content of the CDB list. Same rules as for a rule file. |
+| `ruleset.validate` | `true` | Loads the declared files with `wazuh-analysisd -t` at build time. An error or a warning fails the build. |
 
 ## Receive syslog, run integrations and read GitHub
 
@@ -515,6 +522,100 @@ waits for filebeat to connect, writes an sshd line into a monitored file on
 the server, and finds the resulting alert (rule 5710) in `wazuh-alerts-4.x-*`
 with `curl` against the indexer.
 
+
+## Manage rules, decoders and CDB lists
+
+The manager reads its ruleset from three places.
+
+| Directory in `/var/ossec` | Owner | Source |
+|---|---|---|
+| `ruleset/` | the package | The stock ruleset. The setup unit copies it at each activation. |
+| `etc/declared/` | the configuration | The files of `ruleset.rules`, `ruleset.decoders` and `ruleset.lists`. |
+| `etc/rules`, `etc/decoders`, `etc/lists` | the host | Files that the API or the dashboard editor writes. The module copies them one time from the package and then does not change them. |
+
+Declare a file by its name:
+
+```nix
+services.wazuh-server.ruleset = {
+  decoders."local_decoder.xml".source = ./local_decoder.xml;
+  rules."local_rules.xml".text = ''
+    <group name="local,">
+      <rule id="100100" level="7">
+        <decoded_as>my-app</decoded_as>
+        <description>Event of my-app.</description>
+      </rule>
+      <rule id="100101" level="10">
+        <if_sid>100100</if_sid>
+        <list field="user" lookup="match_key">etc/declared/lists/blocked-users</list>
+        <description>Event of my-app from a blocked user.</description>
+      </rule>
+    </group>
+  '';
+  lists."blocked-users".text = ''
+    mallory:blocked
+  '';
+};
+```
+
+The setup unit installs the files as `root:wazuh` with mode `0640`. The
+generated `ossec.conf` loads `etc/declared/decoders` and `etc/declared/rules`
+after the stock directories and the host directories, and it has one `<list>`
+for each declared list. Each `.xml` file in a declared directory loads. The
+name does not have to end in `_rules.xml`. Use rule identifiers from 100000 to
+120000, the range that upstream keeps for custom rules.
+
+A rebuild is the only way to change a declared file. The API has no write
+access to `etc/declared`. A file that leaves the configuration leaves the host
+at the next activation, and `wazuh-analysisd` restarts with the new ruleset.
+
+`wazuh-analysisd` compiles each list to `<name>.cdb` in the same directory, so
+`etc/declared/lists` is writable for `wazuh-analysisd`. The sticky bit of the
+directory prevents a replacement of the root-owned list.
+
+The build of the system loads the declared files with `wazuh-analysisd -t`,
+together with the stock ruleset and the generated `ossec.conf`. If
+`wazuh-analysisd` reports an error or a warning, the build fails and shows the
+message, and the running manager keeps its ruleset. A rule that names a list
+which does not load is such a warning: the manager ignores that rule.
+
+The build-time check has three limits:
+
+- It does not see the files in `etc/rules`, `etc/decoders` and `etc/lists` of
+  the host. It uses the package defaults for them.
+- It does not run when a `source` is a string that names a host file. A build
+  cannot read that file.
+- `ruleset.validate = false` stops it.
+
+In these three cases, an error shows only when `wazuh-analysisd` starts. It
+does not start, and its journal names the file. Correct the file and rebuild.
+
+An identifier must be unique in the three places. If a declared file and an
+uploaded file define the same rule identifier or decoder name,
+`wazuh-analysisd` uses or refuses them as upstream does. The module does not
+compare the directories.
+
+In a cluster, the master sends `etc/rules`, `etc/decoders` and `etc/lists` to
+the workers. It does not send `etc/declared`. Declare the same files on each
+node.
+
+`settings.ruleset` still sets the stock and host directories, `rule_exclude`
+and `decoder_exclude`. The module adds the declared directories after them.
+
+```sh
+nix build .#checks.x86_64-linux.server-ruleset-check
+nix build .#checks.x86_64-linux.server-ruleset
+```
+
+The check boots one VM and writes events to the analysisd queue. It confirms
+that a declared decoder, two declared rule files and a declared list give
+alerts, that the API lists a declared rule and cannot write `etc/declared`,
+and that a rule file uploaded through the API works after a restart of
+`wazuh-analysisd`. It then activates a second configuration and confirms that
+a removed rule file leaves the host, that its rule stops, and that a changed
+list applies.
+
+`server-ruleset-check` needs no VM. It confirms that the build-time check
+accepts a good ruleset and refuses five bad ones.
 
 ## Structured server configuration
 

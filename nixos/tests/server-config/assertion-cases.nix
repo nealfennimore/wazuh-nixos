@@ -164,4 +164,16 @@ in
     };
   })
   (case "accepts only the built-in users" { api.users.unknown.passwordFile = "/run/password"; })
+  (case "a file name may contain only" { ruleset.rules."../escape.xml".text = "x"; })
+  (case "a file name may contain only" { ruleset.lists.".hidden".text = "x"; })
+  (case "must end in .xml" { ruleset.rules."local_rules".text = "x"; })
+  (case "must end in .xml" { ruleset.decoders."local_decoder.txt".text = "x"; })
+  (case "a name cannot end in .cdb" { ruleset.lists."users.cdb".text = "x"; })
+  (case "set exactly one of text and source" { ruleset.rules."local_rules.xml" = { }; })
+  (case "set exactly one of text and source" {
+    ruleset.lists.users = {
+      text = "x";
+      source = "/run/users";
+    };
+  })
 ]

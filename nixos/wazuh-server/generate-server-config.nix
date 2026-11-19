@@ -90,7 +90,28 @@ let
     else
       { active-response.disabled = true; }
   );
-  settings = lib.recursiveUpdate (lib.recursiveUpdate defaults { global = optionalServices.global; }) settingsRuntime.settings;
+  mergedSettings = lib.recursiveUpdate (lib.recursiveUpdate defaults { global = optionalServices.global; }) settingsRuntime.settings;
+  # The declared files (ruleset.nix). They load after the stock ruleset and
+  # after the host-owned directories, also when settings.ruleset replaces
+  # those. The pattern is explicit: the default for rule_dir accepts only
+  # names that end in _rules.xml.
+  declared = cfg.ruleset;
+  declaredDir = kind: {
+    _attributes.pattern = "\\.xml$";
+    _text = "etc/declared/${kind}";
+  };
+  withDeclared =
+    ruleset:
+    let
+      add = key: extra: lib.optionalAttrs (extra != [ ]) { ${key} = lib.toList (ruleset.${key} or [ ]) ++ extra; };
+    in
+    ruleset
+    // add "decoder_dir" (lib.optional (declared.decoders != { }) (declaredDir "decoders"))
+    // add "rule_dir" (lib.optional (declared.rules != { }) (declaredDir "rules"))
+    // add "list" (map (name: "etc/declared/lists/${name}") (builtins.attrNames declared.lists));
+  settings = mergedSettings // {
+    ruleset = withDeclared (if builtins.isAttrs (mergedSettings.ruleset or null) then mergedSettings.ruleset else { });
+  };
   # ReadConfig processes sections in document order. Active responses look
   # up an already-read command, so alphabetical attribute order is invalid.
   sectionOrder = [

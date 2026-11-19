@@ -138,6 +138,8 @@ nix build .#checks.x86_64-linux.<name>
 | `server-indexer` | 2 | filebeat ships a server alert to the indexer. |
 | `server-runtime` | 2 | A syslog listener, `wazuh-integratord`, the Slack integration and secret handling. |
 | `server-optional` | 1 | `wazuh-maild` and `wazuh-csyslogd` against local receivers. |
+| `server-ruleset` | 1 | Declared rules, decoders and CDB lists reach `wazuh-analysisd`, and a removed file leaves the host. |
+| `server-ruleset-check` | none | The build-time check accepts a good declared ruleset and refuses bad ones. |
 | `server-agentless` | 2 | `wazuh-agentlessd` against an SSH target. |
 | `server-cluster` | 2 | `wazuh-clusterd` on a master and a worker. |
 | `indexer` | 2 | The indexer, its security configuration, and the rotation and recovery of declared user hashes. |

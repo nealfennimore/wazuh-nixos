@@ -185,6 +185,12 @@
         # wazuh-maild against a local SMTP receiver and wazuh-csyslogd
         # against a local UDP receiver, in one VM.
         checks.server-optional = import ./nixos/tests/server-optional { inherit pkgs wazuhServerModule; };
+        # services.wazuh-server.ruleset: declared rules, decoders and CDB
+        # lists reach the running analysisd, and a removed file leaves.
+        checks.server-ruleset = import ./nixos/tests/server-ruleset { inherit pkgs wazuhServerModule; };
+        checks.server-ruleset-check = import ./nixos/tests/server-ruleset/check.nix {
+          inherit pkgs nixpkgs wazuhServerModule;
+        };
         # wazuh-agentlessd against an sshd target, with a key and a
         # password from root-only files, in two VMs.
         checks.server-agentless = import ./nixos/tests/server-agentless { inherit pkgs wazuhServerModule; };
