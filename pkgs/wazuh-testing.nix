@@ -12,7 +12,7 @@
 }:
 python3.pkgs.buildPythonPackage rec {
   pname = "wazuh-testing";
-  version = "4.14.10";
+  version = "4.14.11";
   pyproject = true;
 
   src = fetchFromGitHub {
@@ -21,7 +21,7 @@ python3.pkgs.buildPythonPackage rec {
     rev = "v${version}";
     # Computed from the GitHub tarball of the tag. If the tag moves, the
     # build fails and prints the hash it saw. Paste that value here.
-    hash = "sha256-CGZkA+gnLtt5adFmJOlmJKU2Js8eWRPN8kbpT4c5oaU=";
+    hash = "sha256-kSiqDGZvygvKMMQSmIBpkHr/l1vp8WS9F3uiXwM2qSk=";
   };
 
   build-system = [ python3.pkgs.setuptools ];
