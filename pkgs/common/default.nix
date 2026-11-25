@@ -2,9 +2,9 @@
 let
   # Keep these three in step with the modules/wazuh submodule pin.
   # dependencyVersion mirrors DEPS_VERSION in src/Makefile at the same tag.
-  version = "4.14.10";
-  dependencyVersion = "55";
-  wazuhRev = "6e7835b4880c3210ef30e855a6bb43432be792e1";
+  version = "4.14.11";
+  dependencyVersion = "56";
+  wazuhRev = "8305693956b88042917970c8d22b1277d41865cf";
 
   external_dependencies = import ../dependencies {
     inherit fetchurl lib dependencyVersion;
@@ -25,7 +25,7 @@ let
         owner = "wazuh";
         repo = "wazuh";
         rev = wazuhRev;
-        sha256 = "sha256-ACilbpsT4TTT0qm2HQ07Ww2FT7pV39Wh7gZkQIaTQh4=";
+        sha256 = "sha256-Kad5yE+8aLxH2LTMOIH3riBqYuF3xXHmKp8klSC1brw=";
       };
 
   # rev mirrors HTTP_REQUEST_BRANCH in src/Makefile at the same tag.
@@ -48,7 +48,7 @@ let
     # derivation supplies it instead.
     modern_bpf_c = fetchurl {
       url = "https://raw.githubusercontent.com/wazuh/wazuh/v${version}/src/syscheckd/src/ebpf/src/modern.bpf.c";
-      hash = "sha256-zHEWR4DDSU0zqV+HCUjLxfZHSA0Iqq/06tBkv5faJMY=";
+      hash = "sha256-YZBikwlQrNS65WEUzOxd78L32nM5D+Bwdbq+MfW1OL0=";
     };
   };
 in

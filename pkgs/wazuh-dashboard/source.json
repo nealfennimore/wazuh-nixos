@@ -1,8 +1,8 @@
 {
-  "version": "4.14.10",
+  "version": "4.14.11",
   "revision": "1",
   "hashes": {
-    "amd64": "sha256-uQUZo4Q3/mYSNCLvYQaKtTmYgmfTUbUsAmLRI/DoY28=",
-    "arm64": "sha256-nPVkLi64/Aau8dw/Nz3sRndeDsrQigzSbbgCeV2ENFs="
+    "amd64": "sha256-n3Dc23TqmE1ySsTniS3MCQhNjrUB7VzdqKc9ADD7aFM=",
+    "arm64": "sha256-I6+QlSjcHWxBJnHqGpGuR4R9pYciHNjab7CUQjt8aKk="
   }
 }
